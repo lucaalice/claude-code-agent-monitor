@@ -30,6 +30,7 @@ const agentTeam = [
   'ui-ux-designer',
   'frontend-developer',
   'documentation-expert',
+  'seo-manager',
   'seo-technical',
   'seo-content',
   'seo-schema',
