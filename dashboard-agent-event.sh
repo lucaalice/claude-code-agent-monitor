@@ -43,9 +43,10 @@ fi
 
 # Also mark team-lead as running when any agent starts
 if [ "$event_type" = "agent_start" ]; then
+  lead_task="Delegating to ${agent_type}: ${description:-no description}"
   curl -s -X POST "$DASHBOARD_URL" \
     -H 'Content-Type: application/json' \
-    -d '{"type":"agent_start","agent":"team-lead","task":"Orchestrating agents"}' \
+    -d "$(jq -n --arg task "$lead_task" '{"type":"agent_start","agent":"team-lead","task":$task}')" \
     --connect-timeout 1 --max-time 2 \
     >/dev/null 2>&1 &
 fi
