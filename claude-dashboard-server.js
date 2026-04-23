@@ -511,6 +511,14 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify(logs));
   }
 
+  if (req.url === '/api/analytics' && req.method === 'GET') {
+    const agents = db.prepare('SELECT name, model, allTimeTokens, allTimeTasks, tokensUsed, taskCount FROM agents ORDER BY allTimeTokens DESC').all();
+    const sessions = stmts.listSessions.all();
+    const timeline = stmts.timelineAll.all();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ agents, sessions, timeline }));
+  }
+
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ status: 'ok', demo: DEMO, persisted: true, timestamp: Date.now() }));
