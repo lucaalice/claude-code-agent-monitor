@@ -20,6 +20,21 @@ else
   exit 0
 fi
 
+# Extract token usage from PostToolUse response (if available)
+tokens=0
+if [ "$event_type" = "agent_complete" ]; then
+  # Try to parse usage.total_tokens from tool_response
+  raw_tokens=$(echo "$input" | jq -r '.tool_response.output // ""' | grep -oP 'total_tokens:\s*\K\d+' 2>/dev/null || true)
+  if [ -n "$raw_tokens" ] && [ "$raw_tokens" -gt 0 ] 2>/dev/null; then
+    tokens=$raw_tokens
+  fi
+  # Also try the usage block directly if present
+  usage_tokens=$(echo "$input" | jq -r '.tool_response.usage.total_tokens // 0' 2>/dev/null || echo "0")
+  if [ "$usage_tokens" -gt "$tokens" ] 2>/dev/null; then
+    tokens=$usage_tokens
+  fi
+fi
+
 # Also mark team-lead as running when any agent starts
 if [ "$event_type" = "agent_start" ]; then
   curl -s -X POST "$DASHBOARD_URL" \
@@ -36,7 +51,8 @@ curl -s -X POST "$DASHBOARD_URL" \
     --arg type "$event_type" \
     --arg agent "$agent_type" \
     --arg task "$description" \
-    '{type: $type, agent: $agent, task: $task}'
+    --argjson tokens "$tokens" \
+    '{type: $type, agent: $agent, task: $task, tokens: $tokens}'
   )" \
   --connect-timeout 1 \
   --max-time 2 \
