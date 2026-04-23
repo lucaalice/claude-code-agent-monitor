@@ -30,20 +30,13 @@ fi
 tokens=0
 agent_output=""
 if [ "$hook_event" = "PostToolUse" ]; then
-  agent_output=$(echo "$input" | jq -r '.tool_response.output // empty' | cut -c 1-4000)
-fi
+  # Agent output is in .tool_response.content[].text
+  agent_output=$(echo "$input" | jq -r '[.tool_response.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null | cut -c 1-4000)
 
-if [ "$event_type" = "agent_complete" ] || [ "$event_type" = "agent_error" ]; then
-  # Extract total_tokens from the output text (format: "total_tokens: 12345" or "total_tokens:12345")
-  # Uses sed instead of grep -P for macOS compatibility
-  raw_tokens=$(echo "$agent_output" | sed -n 's/.*total_tokens[: ]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  # Token count is at .tool_response.totalTokens
+  raw_tokens=$(echo "$input" | jq -r '.tool_response.totalTokens // 0' 2>/dev/null || echo "0")
   if [ -n "$raw_tokens" ] && [ "$raw_tokens" -gt 0 ] 2>/dev/null; then
     tokens=$raw_tokens
-  fi
-  # Also try the usage block directly if present in tool_response JSON
-  usage_tokens=$(echo "$input" | jq -r '.tool_response.usage.total_tokens // 0' 2>/dev/null || echo "0")
-  if [ "$usage_tokens" -gt "$tokens" ] 2>/dev/null; then
-    tokens=$usage_tokens
   fi
 fi
 
