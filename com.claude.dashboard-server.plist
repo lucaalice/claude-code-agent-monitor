@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claude.dashboard-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/lucaalice/Desktop/ClaudexSEO/agent-dashboard/claude-dashboard-server.js</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>/Users/lucaalice/Desktop/ClaudexSEO/agent-dashboard</string>
+  <key>StandardOutPath</key>
+  <string>/tmp/claude-dashboard-server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/claude-dashboard-server.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DASHBOARD_PORT</key>
+    <string>3001</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

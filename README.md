@@ -15,6 +15,11 @@ Real-time dashboard for monitoring Claude Code subagent activity. Built with Nod
 - **Error state detection** -- agents that fail show a red error indicator with breathing animation; hook script auto-detects `is_error` from PostToolUse responses
 - **Live elapsed timers** -- each running specialist card shows a ticking timer based on `startTime`
 - **Dynamic agent registration** -- unknown agents from hook events are auto-registered; no hardcoded list required
+- **Session history** -- archive current session, view past runs with token/cost/task summaries, compare sessions
+- **Desktop notifications** -- browser Notification API alerts when agents complete or error; mute toggle in header
+- **Log/output viewer** -- agent output from PostToolUse is captured, stored in SQLite, and shown in expandable card panels
+- **Status filtering** -- filter bar to show only running, error, completed, or idle agents across all sections
+- **Auto-start (launchd)** -- included macOS plist files to start both server and frontend on login
 - **Metric strip** -- total tokens, estimated cost, active agent count, completed tasks, session uptime
 - **Demo mode** -- simulates agent activity without Claude Code running; useful for UI testing and demos
 - **REST API** -- `POST /api/event` to inject events, `GET /api/state` to snapshot, `POST /api/reset` to clear state
@@ -119,6 +124,10 @@ claude-dashboard-server.js  (Node.js, port 3001)
 |--------|------|-------------|
 | `GET` | `/api/state` | Returns the full `agentState` object as JSON |
 | `POST` | `/api/event` | Accepts an event object; updates state and broadcasts via WebSocket |
+| `POST` | `/api/session/archive` | Archives current session to history, then resets state |
+| `GET` | `/api/sessions` | Lists all archived sessions (last 50) |
+| `GET` | `/api/sessions/:id` | Returns a single session with full agent snapshot |
+| `GET` | `/api/logs/:agent` | Returns last 20 log entries for a specific agent |
 | `GET` | `/health` | Returns `{"status":"ok","demo":<bool>,"timestamp":<ms>}` |
 | `OPTIONS` | `*` | CORS preflight -- all origins permitted |
 
@@ -278,7 +287,27 @@ const agentTeam = [
 Rules:
 - The first entry (`team-lead`) is the orchestrator, rendered in `TeamLeadCard`. All others are specialists.
 - Model is set to `sonnet` for indices 1-8 and `inherited` for 9+. Adjust the condition in the `forEach` loop if needed.
-- Agent names in `POST /api/event` must exactly match entries in this array or they are silently ignored.
+- Unknown agent names sent via `POST /api/event` are auto-registered and appear in the Direct Reports section.
+
+### Auto-start (launchd)
+
+Two macOS launchd plists are included to start both services on login:
+
+```bash
+# Install — copies plists and loads them
+cp com.claude.dashboard-server.plist com.claude.dashboard-frontend.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.claude.dashboard-server.plist
+launchctl load ~/Library/LaunchAgents/com.claude.dashboard-frontend.plist
+```
+
+```bash
+# Uninstall
+launchctl unload ~/Library/LaunchAgents/com.claude.dashboard-server.plist
+launchctl unload ~/Library/LaunchAgents/com.claude.dashboard-frontend.plist
+rm ~/Library/LaunchAgents/com.claude.dashboard-*.plist
+```
+
+Logs go to `/tmp/claude-dashboard-server.log` and `/tmp/claude-dashboard-frontend.log`.
 
 ---
 
@@ -338,18 +367,20 @@ team-lead (Opus)
 
 ```
 claude-code-agent-monitor/
-├── claude-dashboard-server.js    # Node.js HTTP + WebSocket server
-├── package.json                  # Server dependencies (ws)
-├── dashboard-agent-event.sh      # Hook script for Claude Code
+├── claude-dashboard-server.js          # Node.js HTTP + WebSocket server
+├── package.json                        # Server dependencies (ws, better-sqlite3)
+├── dashboard-agent-event.sh            # Hook script for Claude Code
+├── com.claude.dashboard-server.plist   # launchd plist — auto-start server
+├── com.claude.dashboard-frontend.plist # launchd plist — auto-start frontend
 ├── screenshots/
 │   ├── dashboard-top.png
 │   └── dashboard-full.png
 └── frontend/
-    ├── package.json              # React 19, Vite 6
+    ├── package.json                    # React 19, Vite 6
     └── src/
         ├── main.jsx
         ├── App.jsx
-        ├── ClaudeCodeDashboard.jsx  # Full dashboard UI
+        ├── ClaudeCodeDashboard.jsx     # Full dashboard UI
         ├── App.css
         └── index.css
 ```

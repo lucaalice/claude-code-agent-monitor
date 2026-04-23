@@ -26,8 +26,13 @@ else
   exit 0
 fi
 
-# Extract token usage from PostToolUse response (if available)
+# Extract agent output and token usage from PostToolUse response
 tokens=0
+agent_output=""
+if [ "$hook_event" = "PostToolUse" ]; then
+  agent_output=$(echo "$input" | jq -r '.tool_response.output // empty' | head -c 4000)
+fi
+
 if [ "$event_type" = "agent_complete" ]; then
   # Try to parse usage.total_tokens from tool_response
   raw_tokens=$(echo "$input" | jq -r '.tool_response.output // ""' | grep -oP 'total_tokens:\s*\K\d+' 2>/dev/null || true)
@@ -59,7 +64,8 @@ curl -s -X POST "$DASHBOARD_URL" \
     --arg agent "$agent_type" \
     --arg task "$description" \
     --argjson tokens "$tokens" \
-    '{type: $type, agent: $agent, task: $task, tokens: $tokens}'
+    --arg output "$agent_output" \
+    '{type: $type, agent: $agent, task: $task, tokens: $tokens, output: $output}'
   )" \
   --connect-timeout 1 \
   --max-time 2 \

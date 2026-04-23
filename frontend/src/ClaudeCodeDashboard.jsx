@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 // ─── Inject keyframes ─────────────────────────────────────────────────────────
 const styleSheet = document.createElement('style');
@@ -12,6 +12,10 @@ styleSheet.textContent = `
   @keyframes breatheAmber {
     0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0), 0 0 6px rgba(251,191,36,0.1); }
     50%       { box-shadow: 0 0 0 3px rgba(251,191,36,0.06), 0 0 14px rgba(251,191,36,0.2); }
+  }
+  @keyframes breatheRed {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0), 0 0 6px rgba(248,113,113,0.1); }
+    50%       { box-shadow: 0 0 0 3px rgba(248,113,113,0.06), 0 0 14px rgba(248,113,113,0.2); }
   }
   @keyframes pipPulse {
     0%, 100% { opacity: 1; transform: scale(1); }
@@ -38,10 +42,6 @@ styleSheet.textContent = `
     50%  { border-left-color: rgba(52,211,153,1); }
     100% { border-left-color: rgba(52,211,153,0.6); }
   }
-  @keyframes breatheRed {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0), 0 0 6px rgba(248,113,113,0.1); }
-    50%       { box-shadow: 0 0 0 3px rgba(248,113,113,0.06), 0 0 14px rgba(248,113,113,0.2); }
-  }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
@@ -53,39 +53,30 @@ if (!document.head.querySelector('[data-ccd-styles]')) {
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const T = {
-  // Backgrounds — charcoal/slate, not pure black
-  bg:          '#111318',   // main app background
-  bgSurface:   '#181b22',   // card/panel surface
-  bgSurfaceHi: '#1e2230',   // elevated: header, active row
-  bgOverlay:   '#242838',   // tooltip / pill backgrounds
-
-  // Borders — subtle, not harsh
+  bg:          '#111318',
+  bgSurface:   '#181b22',
+  bgSurfaceHi: '#1e2230',
+  bgOverlay:   '#242838',
   border:      'rgba(255,255,255,0.06)',
   borderMed:   'rgba(255,255,255,0.10)',
   borderBright:'rgba(255,255,255,0.16)',
-
-  // Status accent colors — vivid but not neon
-  green:       '#34d399',   // emerald-400 — running
+  green:       '#34d399',
   greenDim:    'rgba(52,211,153,0.15)',
   greenGlow:   'rgba(52,211,153,0.25)',
-  teal:        '#22d3ee',   // cyan-400 — alternate accent
-  blue:        '#60a5fa',   // blue-400 — completed
+  teal:        '#22d3ee',
+  blue:        '#60a5fa',
   blueDim:     'rgba(96,165,250,0.15)',
-  amber:       '#fbbf24',   // amber-400 — waiting
+  amber:       '#fbbf24',
   amberDim:    'rgba(251,191,36,0.12)',
-  slate:       '#64748b',   // slate-500 — idle
+  slate:       '#64748b',
   slateDim:    'rgba(100,116,139,0.12)',
-  purple:      '#a78bfa',   // violet-400 — metrics accent
-  red:         '#f87171',   // red-400
+  purple:      '#a78bfa',
+  red:         '#f87171',
   redDim:      'rgba(248,113,113,0.12)',
-
-  // Text hierarchy
-  textPrimary: '#f1f5f9',   // slate-100
-  textSecond:  '#94a3b8',   // slate-400
-  textMuted:   '#475569',   // slate-600
-  textDim:     '#334155',   // slate-700
-
-  // Typography
+  textPrimary: '#f1f5f9',
+  textSecond:  '#94a3b8',
+  textMuted:   '#475569',
+  textDim:     '#334155',
   sans: '"Inter", "system-ui", "-apple-system", "Segoe UI", sans-serif',
   mono: '"JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", "Consolas", monospace',
 };
@@ -110,6 +101,10 @@ const pad2 = (n) => String(n).padStart(2, '0');
 const ts = (t) => {
   const d = new Date(t);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+};
+const formatDate = (t) => {
+  const d = new Date(t);
+  return `${d.getMonth()+1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 };
 
 // ─── Status config ────────────────────────────────────────────────────────────
@@ -142,10 +137,8 @@ function StatusDot({ status, size = 8 }) {
   );
 }
 
-// Slim pill badge for status
 function StatusBadge({ status }) {
   const m = getStatus(status);
-  const isRunning = status === 'running';
   return (
     <span style={{
       display:         'inline-flex',
@@ -168,7 +161,6 @@ function StatusBadge({ status }) {
   );
 }
 
-// Animated loading bar for running agents
 function ActivityBar({ active }) {
   if (!active) return null;
   return (
@@ -184,7 +176,6 @@ function ActivityBar({ active }) {
   );
 }
 
-// Section divider
 function Divider({ vertical = false }) {
   return (
     <div style={vertical ? {
@@ -200,7 +191,6 @@ function Divider({ vertical = false }) {
   );
 }
 
-// Section header — clean label, no tmux theatrics
 function SectionHeader({ label, right, accent = false }) {
   return (
     <div style={{
@@ -236,94 +226,123 @@ function SectionHeader({ label, right, accent = false }) {
   );
 }
 
-// ─── Metrics strip ────────────────────────────────────────────────────────────
-function MetricStrip({ metrics, activeAgentCount, now }) {
-  const items = [
-    {
-      key:   'Active Agents',
-      value: activeAgentCount,
-      unit:  activeAgentCount === 1 ? 'agent' : 'agents',
-      color: T.green,
-      dim:   T.greenDim,
-    },
-    {
-      key:   'Tokens Used',
-      value: formatTokens(metrics.totalTokens),
-      unit:  'total',
-      color: T.blue,
-      dim:   T.blueDim,
-    },
-    {
-      key:   'Est. Cost',
-      value: formatCost(metrics.totalCost),
-      unit:  'USD',
-      color: T.amber,
-      dim:   T.amberDim,
-    },
-    {
-      key:   'Tasks Done',
-      value: metrics.completedTasks,
-      unit:  'completed',
-      color: T.purple,
-      dim:   'rgba(167,139,250,0.12)',
-    },
-    {
-      key:   'Session',
-      value: formatTime(now - metrics.sessionStartTime),
-      unit:  'elapsed',
-      color: T.textSecond,
-      dim:   'rgba(148,163,184,0.08)',
-    },
+// ─── Filter bar ──────────────────────────────────────────────────────────────
+function FilterBar({ filter, setFilter, counts }) {
+  const buttons = [
+    { key: 'all',       label: 'All',       color: T.textSecond },
+    { key: 'running',   label: 'Running',   color: T.green },
+    { key: 'error',     label: 'Error',     color: T.red },
+    { key: 'completed', label: 'Done',      color: T.blue },
+    { key: 'idle',      label: 'Idle',      color: T.slate },
   ];
 
   return (
     <div style={{
-      display:      'flex',
-      borderBottom: `1px solid ${T.border}`,
+      display:         'flex',
+      alignItems:      'center',
+      gap:             6,
+      padding:         '6px 16px',
+      backgroundColor: T.bgSurface,
+      borderBottom:    `1px solid ${T.border}`,
     }}>
+      <span style={{
+        fontFamily:    T.sans,
+        fontSize:      10,
+        color:         T.textDim,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginRight:   4,
+      }}>
+        Filter
+      </span>
+      {buttons.map((btn) => {
+        const active = filter === btn.key;
+        const count = btn.key === 'all' ? counts.all : (counts[btn.key] || 0);
+        return (
+          <button
+            key={btn.key}
+            onClick={() => setFilter(btn.key)}
+            style={{
+              display:         'inline-flex',
+              alignItems:      'center',
+              gap:             4,
+              padding:         '3px 10px',
+              borderRadius:    99,
+              border:          `1px solid ${active ? btn.color + '40' : T.border}`,
+              backgroundColor: active ? btn.color + '15' : 'transparent',
+              color:           active ? btn.color : T.textMuted,
+              fontFamily:      T.sans,
+              fontSize:        11,
+              fontWeight:      active ? 600 : 400,
+              cursor:          'pointer',
+              transition:      'all 0.15s ease',
+            }}
+          >
+            {btn.label}
+            <span style={{
+              fontFamily: T.mono,
+              fontSize:   10,
+              opacity:    0.7,
+            }}>
+              {count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Metrics strip ────────────────────────────────────────────────────────────
+function MetricStrip({ metrics, activeAgentCount, now, onArchive }) {
+  const items = [
+    { key: 'Active Agents', value: activeAgentCount, unit: activeAgentCount === 1 ? 'agent' : 'agents', color: T.green, dim: T.greenDim },
+    { key: 'Tokens Used', value: formatTokens(metrics.totalTokens), unit: 'total', color: T.blue, dim: T.blueDim },
+    { key: 'Est. Cost', value: formatCost(metrics.totalCost), unit: 'USD', color: T.amber, dim: T.amberDim },
+    { key: 'Tasks Done', value: metrics.completedTasks, unit: 'completed', color: T.purple, dim: 'rgba(167,139,250,0.12)' },
+    { key: 'Session', value: formatTime(now - metrics.sessionStartTime), unit: 'elapsed', color: T.textSecond, dim: 'rgba(148,163,184,0.08)' },
+  ];
+
+  return (
+    <div style={{ display: 'flex', borderBottom: `1px solid ${T.border}` }}>
       {items.map((item, i) => (
         <React.Fragment key={item.key}>
           {i > 0 && <Divider vertical />}
           <div style={{
-            flex:            1,
-            padding:         '12px 18px',
-            display:         'flex',
-            flexDirection:   'column',
-            gap:             3,
-            backgroundColor: T.bgSurface,
-            transition:      'background-color 0.2s ease',
+            flex: 1, padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: 3,
+            backgroundColor: T.bgSurface, transition: 'background-color 0.2s ease',
           }}>
-            <span style={{
-              fontFamily:  T.sans,
-              fontSize:    10,
-              fontWeight:  500,
-              color:       T.textMuted,
-              textTransform: 'uppercase',
-              letterSpacing: 0.6,
-              whiteSpace:  'nowrap',
-            }}>
+            <span style={{ fontFamily: T.sans, fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
               {item.key}
             </span>
-            <span style={{
-              fontFamily:  T.mono,
-              fontSize:    20,
-              fontWeight:  700,
-              color:       item.color,
-              lineHeight:  1,
-              whiteSpace:  'nowrap',
-            }}>
+            <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 700, color: item.color, lineHeight: 1, whiteSpace: 'nowrap' }}>
               {item.value}
             </span>
-            <span style={{
-              fontFamily:  T.sans,
-              fontSize:    10,
-              color:       T.textDim,
-            }}>
+            <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim }}>
               {item.unit}
             </span>
           </div>
         </React.Fragment>
       ))}
+      {/* Archive button */}
+      <Divider vertical />
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '0 16px', backgroundColor: T.bgSurface,
+      }}>
+        <button
+          onClick={onArchive}
+          title="Archive current session and start fresh"
+          style={{
+            padding: '6px 12px', borderRadius: 6,
+            border: `1px solid ${T.border}`, backgroundColor: T.bgOverlay,
+            color: T.textSecond, fontFamily: T.sans, fontSize: 11, fontWeight: 500,
+            cursor: 'pointer', transition: 'all 0.15s ease', whiteSpace: 'nowrap',
+          }}
+        >
+          Archive
+        </button>
+      </div>
     </div>
   );
 }
@@ -331,98 +350,53 @@ function MetricStrip({ metrics, activeAgentCount, now }) {
 // ─── Team Lead card ───────────────────────────────────────────────────────────
 function TeamLeadCard({ agent, elapsedTime }) {
   const isRunning = agent.status === 'running';
-  const isWaiting = agent.status === 'waiting';
-  const m = getStatus(agent.status);
-
   return (
     <div style={{
-      margin:          '12px 14px',
-      borderRadius:    8,
-      border:          `1px solid ${isRunning ? T.green + '40' : T.border}`,
-      backgroundColor: T.bgSurfaceHi,
-      overflow:        'hidden',
-      animation:       isRunning ? 'breatheGreen 3s ease-in-out infinite' : 'none',
-      transition:      'border-color 0.3s ease, box-shadow 0.3s ease',
+      margin: '12px 14px', borderRadius: 8,
+      border: `1px solid ${isRunning ? T.green + '40' : T.border}`,
+      backgroundColor: T.bgSurfaceHi, overflow: 'hidden',
+      animation: isRunning ? 'breatheGreen 3s ease-in-out infinite' : 'none',
+      transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
     }}>
-      {/* Card header bar */}
       <div style={{
-        display:         'flex',
-        alignItems:      'center',
-        justifyContent:  'space-between',
-        padding:         '8px 14px',
-        borderBottom:    `1px solid ${T.border}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '8px 14px', borderBottom: `1px solid ${T.border}`,
         backgroundColor: isRunning ? 'rgba(52,211,153,0.04)' : 'transparent',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Monospace name — the one place mono makes sense */}
-          <span style={{
-            fontFamily:  T.mono,
-            fontSize:    13,
-            fontWeight:  700,
-            color:       isRunning ? T.green : T.textPrimary,
-            letterSpacing: 0.3,
-          }}>
+          <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: isRunning ? T.green : T.textPrimary, letterSpacing: 0.3 }}>
             team-lead
           </span>
           <span style={{
-            fontFamily:      T.mono,
-            fontSize:        10,
-            color:           T.textMuted,
-            backgroundColor: T.bgOverlay,
-            border:          `1px solid ${T.border}`,
-            padding:         '1px 7px',
-            borderRadius:    4,
+            fontFamily: T.mono, fontSize: 10, color: T.textMuted,
+            backgroundColor: T.bgOverlay, border: `1px solid ${T.border}`,
+            padding: '1px 7px', borderRadius: 4,
           }}>
             {agent.model}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {elapsedTime && (
-            <span style={{
-              fontFamily:  T.mono,
-              fontSize:    11,
-              color:       T.amber,
-              fontWeight:  600,
-            }}>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.amber, fontWeight: 600 }}>
               {elapsedTime}
             </span>
           )}
           <StatusBadge status={agent.status} />
         </div>
       </div>
-
-      {/* Task row */}
       {agent.currentTask ? (
         <div style={{ padding: '10px 14px' }}>
-          <span style={{
-            fontFamily:  T.sans,
-            fontSize:    10,
-            color:       T.textMuted,
-            fontWeight:  500,
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-          }}>
+          <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textMuted, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5 }}>
             Current task
           </span>
-          <p style={{
-            margin:      '4px 0 0',
-            fontFamily:  T.mono,
-            fontSize:    12,
-            color:       T.textSecond,
-            lineHeight:  1.6,
-          }}>
+          <p style={{ margin: '4px 0 0', fontFamily: T.mono, fontSize: 12, color: T.textSecond, lineHeight: 1.6 }}>
             {agent.currentTask}
           </p>
           <ActivityBar active={isRunning} />
         </div>
       ) : (
         <div style={{ padding: '10px 14px' }}>
-          <span style={{
-            fontFamily: T.sans,
-            fontSize:   12,
-            color:      T.textDim,
-            fontStyle:  'italic',
-          }}>
+          <span style={{ fontFamily: T.sans, fontSize: 12, color: T.textDim, fontStyle: 'italic' }}>
             No active task
           </span>
         </div>
@@ -434,84 +408,43 @@ function TeamLeadCard({ agent, elapsedTime }) {
 // ─── Sub-orchestrator card (seo-manager) ────────────────────────────────────
 function SubOrchestratorCard({ agent, childCount }) {
   const isRunning = agent.status === 'running';
-  const m = getStatus(agent.status);
-
   return (
     <div style={{
-      margin:          '10px 14px 4px',
-      borderRadius:    8,
-      border:          `1px solid ${isRunning ? T.green + '35' : T.border}`,
-      backgroundColor: T.bgSurfaceHi,
-      overflow:        'hidden',
-      animation:       isRunning ? 'breatheGreen 3s ease-in-out infinite' : 'none',
-      transition:      'border-color 0.3s ease',
+      margin: '10px 14px 4px', borderRadius: 8,
+      border: `1px solid ${isRunning ? T.green + '35' : T.border}`,
+      backgroundColor: T.bgSurfaceHi, overflow: 'hidden',
+      animation: isRunning ? 'breatheGreen 3s ease-in-out infinite' : 'none',
+      transition: 'border-color 0.3s ease',
     }}>
       <div style={{
-        display:         'flex',
-        alignItems:      'center',
-        justifyContent:  'space-between',
-        padding:         '7px 12px',
-        backgroundColor: isRunning ? 'rgba(52,211,153,0.04)' : 'transparent',
-        borderBottom:    `1px solid ${T.border}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '7px 12px', backgroundColor: isRunning ? 'rgba(52,211,153,0.04)' : 'transparent',
+        borderBottom: `1px solid ${T.border}`,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Tree connector icon */}
-          <span style={{
-            fontFamily: T.mono,
-            fontSize:   11,
-            color:      isRunning ? T.green : T.textDim,
-          }}>
-            &#9507;
-          </span>
-          <span style={{
-            fontFamily:  T.mono,
-            fontSize:    12,
-            fontWeight:  700,
-            color:       isRunning ? T.green : T.textPrimary,
-            letterSpacing: 0.3,
-          }}>
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: isRunning ? T.green : T.textDim }}>&#9507;</span>
+          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: isRunning ? T.green : T.textPrimary, letterSpacing: 0.3 }}>
             seo-manager
           </span>
           <span style={{
-            fontFamily:      T.mono,
-            fontSize:        10,
-            color:           T.textMuted,
-            backgroundColor: T.bgOverlay,
-            border:          `1px solid ${T.border}`,
-            padding:         '1px 7px',
-            borderRadius:    4,
+            fontFamily: T.mono, fontSize: 10, color: T.textMuted,
+            backgroundColor: T.bgOverlay, border: `1px solid ${T.border}`,
+            padding: '1px 7px', borderRadius: 4,
           }}>
             opus
           </span>
-          <span style={{
-            fontFamily: T.sans,
-            fontSize:   10,
-            color:      T.textMuted,
-          }}>
+          <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textMuted }}>
             {childCount} specialists
           </span>
         </div>
         <StatusBadge status={agent.status} />
       </div>
-
       {agent.currentTask ? (
         <div style={{ padding: '8px 12px' }}>
-          <span style={{
-            fontFamily:  T.sans,
-            fontSize:    9,
-            color:       T.textMuted,
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-          }}>
+          <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
             Current task
           </span>
-          <p style={{
-            margin:     '3px 0 0',
-            fontFamily: T.mono,
-            fontSize:   11,
-            color:      T.textSecond,
-            lineHeight: 1.5,
-          }}>
+          <p style={{ margin: '3px 0 0', fontFamily: T.mono, fontSize: 11, color: T.textSecond, lineHeight: 1.5 }}>
             {agent.currentTask}
           </p>
           <ActivityBar active={isRunning} />
@@ -529,6 +462,7 @@ function SubOrchestratorCard({ agent, childCount }) {
 
 // ─── Specialist card (grid item) ─────────────────────────────────────────────
 function SpecialistCard({ agent, index, compact, now }) {
+  const [showLog, setShowLog] = useState(false);
   const isRunning = agent.status === 'running';
   const isWaiting = agent.status === 'waiting';
   const isError   = agent.status === 'error';
@@ -537,65 +471,39 @@ function SpecialistCard({ agent, index, compact, now }) {
 
   return (
     <div style={{
-      borderRadius:    7,
-      border:          `1px solid ${isError ? T.red + '35' : isRunning ? T.green + '35' : isWaiting ? T.amber + '25' : T.border}`,
-      backgroundColor: T.bgSurfaceHi,
-      overflow:        'hidden',
-      animation:       isError
+      borderRadius: 7,
+      border: `1px solid ${isError ? T.red + '35' : isRunning ? T.green + '35' : isWaiting ? T.amber + '25' : T.border}`,
+      backgroundColor: T.bgSurfaceHi, overflow: 'hidden',
+      animation: isError
         ? 'breatheRed 3s ease-in-out infinite, fadeSlideIn 0.25s ease-out'
         : isRunning
         ? 'breatheGreen 3s ease-in-out infinite, fadeSlideIn 0.25s ease-out'
         : isWaiting
         ? 'breatheAmber 4s ease-in-out infinite, fadeSlideIn 0.25s ease-out'
         : 'fadeSlideIn 0.25s ease-out',
-      transition:      'border-color 0.3s ease',
+      transition: 'border-color 0.3s ease',
     }}>
       {/* Card top: name + status */}
       <div style={{
-        display:         'flex',
-        alignItems:      'center',
-        justifyContent:  'space-between',
-        padding:         '8px 12px',
-        borderBottom:    `1px solid ${T.border}`,
-        backgroundColor: isError
-          ? 'rgba(248,113,113,0.04)'
-          : isRunning
-          ? 'rgba(52,211,153,0.04)'
-          : isWaiting
-          ? 'rgba(251,191,36,0.04)'
-          : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '8px 12px', borderBottom: `1px solid ${T.border}`,
+        backgroundColor: isError ? 'rgba(248,113,113,0.04)' : isRunning ? 'rgba(52,211,153,0.04)' : isWaiting ? 'rgba(251,191,36,0.04)' : 'transparent',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <span style={{
-            fontFamily:    T.sans,
-            fontSize:      10,
-            color:         T.textDim,
-            fontWeight:    500,
-            flexShrink:    0,
-          }}>
+          <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim, fontWeight: 500, flexShrink: 0 }}>
             {String(index + 1).padStart(2, '0')}
           </span>
           <span style={{
-            fontFamily:    T.mono,
-            fontSize:      12,
-            fontWeight:    isRunning || isError ? 700 : 500,
-            color:         isError ? T.red : isRunning ? T.green : isWaiting ? T.amber : T.textSecond,
-            overflow:      'hidden',
-            textOverflow:  'ellipsis',
-            whiteSpace:    'nowrap',
-            letterSpacing: 0.2,
+            fontFamily: T.mono, fontSize: 12, fontWeight: isRunning || isError ? 700 : 500,
+            color: isError ? T.red : isRunning ? T.green : isWaiting ? T.amber : T.textSecond,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0.2,
           }}>
             {agent.name}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {elapsed && (
-            <span style={{
-              fontFamily:  T.mono,
-              fontSize:    10,
-              color:       T.amber,
-              fontWeight:  600,
-            }}>
+            <span style={{ fontFamily: T.mono, fontSize: 10, color: T.amber, fontWeight: 600 }}>
               {elapsed}
             </span>
           )}
@@ -606,16 +514,10 @@ function SpecialistCard({ agent, index, compact, now }) {
       {/* Card body: task + stats */}
       <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <p style={{
-          margin:       0,
-          fontFamily:   T.mono,
-          fontSize:     11,
-          color:        isRunning ? T.textSecond : T.textMuted,
-          lineHeight:   1.5,
-          overflow:     'hidden',
-          display:      '-webkit-box',
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical',
-          minHeight:    '2.8em',
+          margin: 0, fontFamily: T.mono, fontSize: 11,
+          color: isRunning ? T.textSecond : T.textMuted, lineHeight: 1.5,
+          overflow: 'hidden', display: '-webkit-box',
+          WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', minHeight: '2.8em',
         }}>
           {agent.currentTask || (isRunning ? 'Processing...' : 'No active task')}
         </p>
@@ -623,24 +525,48 @@ function SpecialistCard({ agent, index, compact, now }) {
         {isRunning && <ActivityBar active />}
 
         {/* Stats row */}
-        <div style={{ display: 'flex', gap: 12, paddingTop: 4 }}>
+        <div style={{ display: 'flex', gap: 12, paddingTop: 4, alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Tasks
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: T.textSecond }}>
-              {agent.taskCount}
-            </span>
+            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>Tasks</span>
+            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: T.textSecond }}>{agent.taskCount}</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Tokens
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: agent.tokens ? T.blue : T.textDim }}>
-              {agent.tokens ? formatTokens(agent.tokens) : '—'}
+            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>Tokens</span>
+            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: agent.tokensUsed ? T.blue : T.textDim }}>
+              {agent.tokensUsed ? formatTokens(agent.tokensUsed) : '—'}
             </span>
           </div>
+          {/* Log toggle */}
+          {agent.lastOutput && (
+            <button
+              onClick={() => setShowLog(!showLog)}
+              style={{
+                marginLeft: 'auto', padding: '2px 8px', borderRadius: 4,
+                border: `1px solid ${T.border}`, backgroundColor: showLog ? T.bgOverlay : 'transparent',
+                color: T.textMuted, fontFamily: T.mono, fontSize: 10, cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {showLog ? 'Hide log' : 'Log'}
+            </button>
+          )}
         </div>
+
+        {/* Log output viewer */}
+        {showLog && agent.lastOutput && (
+          <div style={{
+            marginTop: 4, padding: '8px 10px', borderRadius: 4,
+            backgroundColor: '#0d1117', border: `1px solid ${T.border}`,
+            maxHeight: 160, overflowY: 'auto',
+          }}>
+            <pre style={{
+              margin: 0, fontFamily: T.mono, fontSize: 10, color: T.textSecond,
+              lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            }}>
+              {agent.lastOutput}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -653,52 +579,66 @@ function TaskQueue({ tasks }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {slice.map((task, i) => (
         <div key={i} style={{
-          display:      'grid',
-          gridTemplateColumns: '48px 1fr',
-          gap:          0,
-          padding:      '7px 14px',
+          display: 'grid', gridTemplateColumns: '48px 1fr', gap: 0,
+          padding: '7px 14px',
           borderBottom: i < slice.length - 1 ? `1px solid ${T.border}` : 'none',
-          animation:    `fadeSlideIn ${0.05 + i * 0.03}s ease-out`,
-          transition:   'background-color 0.15s ease',
+          animation: `fadeSlideIn ${0.05 + i * 0.03}s ease-out`,
         }}>
-          {/* Timestamp */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span style={{
-              fontFamily:  T.mono,
-              fontSize:    9,
-              color:       T.textMuted,
-              letterSpacing: 0.3,
-              lineHeight:  1.3,
-            }}>
+            <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, letterSpacing: 0.3, lineHeight: 1.3 }}>
               {ts(task.timestamp)}
             </span>
-            <span style={{
-              fontFamily:  T.mono,
-              fontSize:    9,
-              color:       T.textDim,
-              overflow:    'hidden',
-              textOverflow:'ellipsis',
-              whiteSpace:  'nowrap',
-            }}>
+            <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {task.agent || 'sys'}
             </span>
           </div>
-
-          {/* Task description */}
           <span style={{
-            fontFamily:  T.sans,
-            fontSize:    11,
-            color:       T.textSecond,
-            lineHeight:  1.5,
-            overflow:    'hidden',
-            display:     '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            paddingLeft: 8,
-            borderLeft:  `2px solid ${T.border}`,
+            fontFamily: T.sans, fontSize: 11, color: T.textSecond, lineHeight: 1.5,
+            overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+            paddingLeft: 8, borderLeft: `2px solid ${T.border}`,
           }}>
             {task.task}
           </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Session history panel ───────────────────────────────────────────────────
+function SessionHistory({ sessions, onClose }) {
+  if (!sessions || sessions.length === 0) {
+    return (
+      <div style={{ padding: '16px', textAlign: 'center' }}>
+        <span style={{ fontFamily: T.sans, fontSize: 12, color: T.textDim }}>No archived sessions</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {sessions.map((s) => (
+        <div key={s.id} style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
+          gap: 8, padding: '8px 14px', borderBottom: `1px solid ${T.border}`,
+          animation: 'fadeSlideIn 0.2s ease-out',
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>When</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textSecond }}>{formatDate(s.startTime)}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>Duration</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textSecond }}>{formatTime(s.endTime - s.startTime)}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>Tokens</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.blue }}>{formatTokens(s.totalTokens)}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>Tasks</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.purple }}>{s.completedTasks}</span>
+          </div>
         </div>
       ))}
     </div>
@@ -715,79 +655,37 @@ function BootScreen({ connected }) {
 
   return (
     <div style={{
-      minHeight:       '100vh',
-      backgroundColor: T.bg,
-      display:         'flex',
-      flexDirection:   'column',
-      alignItems:      'center',
-      justifyContent:  'center',
-      gap:             24,
+      minHeight: '100vh', backgroundColor: T.bg,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24,
     }}>
-      {/* Wordmark */}
       <div style={{ textAlign: 'center' }}>
-        <div style={{
-          fontFamily:    T.sans,
-          fontSize:      28,
-          fontWeight:    700,
-          color:         T.textPrimary,
-          letterSpacing: -0.5,
-          marginBottom:  4,
-        }}>
+        <div style={{ fontFamily: T.sans, fontSize: 28, fontWeight: 700, color: T.textPrimary, letterSpacing: -0.5, marginBottom: 4 }}>
           Agent Monitor
         </div>
-        <div style={{
-          fontFamily:  T.sans,
-          fontSize:    13,
-          color:       T.textMuted,
-          letterSpacing: 0.3,
-        }}>
+        <div style={{ fontFamily: T.sans, fontSize: 13, color: T.textMuted, letterSpacing: 0.3 }}>
           Claude Code · Real-time dashboard
         </div>
       </div>
-
-      {/* Connection status pill */}
       <div style={{
-        display:         'flex',
-        alignItems:      'center',
-        gap:             10,
-        padding:         '10px 20px',
-        borderRadius:    8,
-        backgroundColor: T.bgSurface,
-        border:          `1px solid ${T.border}`,
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px',
+        borderRadius: 8, backgroundColor: T.bgSurface, border: `1px solid ${T.border}`,
       }}>
         <div style={{
-          width:           8,
-          height:          8,
-          borderRadius:    '50%',
+          width: 8, height: 8, borderRadius: '50%',
           backgroundColor: connected ? T.green : T.amber,
-          animation:       'connectBlink 1s ease-in-out infinite',
-          boxShadow:       `0 0 8px ${connected ? T.green : T.amber}`,
+          animation: 'connectBlink 1s ease-in-out infinite',
+          boxShadow: `0 0 8px ${connected ? T.green : T.amber}`,
         }} />
-        <span style={{
-          fontFamily:  T.sans,
-          fontSize:    13,
-          color:       connected ? T.green : T.amber,
-          fontWeight:  500,
-        }}>
-          {connected
-            ? `Waiting for data${dots}`
-            : `Connecting${dots} (auto-reconnect enabled)`}
+        <span style={{ fontFamily: T.sans, fontSize: 13, color: connected ? T.green : T.amber, fontWeight: 500 }}>
+          {connected ? `Waiting for data${dots}` : `Connecting${dots} (auto-reconnect enabled)`}
         </span>
       </div>
-
-      {/* CLI hint */}
       {!connected && (
         <div style={{
-          padding:         '10px 16px',
-          borderRadius:    6,
-          backgroundColor: T.bgSurface,
-          border:          `1px solid ${T.border}`,
-          fontFamily:      T.mono,
-          fontSize:        12,
-          color:           T.textSecond,
+          padding: '10px 16px', borderRadius: 6, backgroundColor: T.bgSurface,
+          border: `1px solid ${T.border}`, fontFamily: T.mono, fontSize: 12, color: T.textSecond,
         }}>
-          <span style={{ color: T.textDim }}>$ </span>
-          node claude-dashboard-server.js
+          <span style={{ color: T.textDim }}>$ </span>node claude-dashboard-server.js
         </div>
       )}
     </div>
@@ -796,15 +694,79 @@ function BootScreen({ connected }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ClaudeCodeDashboard() {
-  const [agentState, setAgentState] = useState(null);
-  const [connected, setConnected]   = useState(false);
-  const [now, setNow]               = useState(Date.now());
+  const [agentState, setAgentState]     = useState(null);
+  const [connected, setConnected]       = useState(false);
+  const [now, setNow]                   = useState(Date.now());
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sessions, setSessions]         = useState([]);
+  const [showSessions, setShowSessions] = useState(false);
+  const [notifMuted, setNotifMuted]     = useState(() => localStorage.getItem('dashboard-notif-muted') === 'true');
+  const prevStateRef = useRef(null);
 
-  // Live clock — drives elapsed counters
+  // Live clock
   useEffect(() => {
     const iv = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(iv);
   }, []);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Desktop notifications — diff previous vs current agent state
+  useEffect(() => {
+    if (!agentState || notifMuted || !('Notification' in window) || Notification.permission !== 'granted') {
+      prevStateRef.current = agentState;
+      return;
+    }
+    const prev = prevStateRef.current;
+    if (prev && prev.specialists) {
+      const prevSpecs = prev.specialists;
+      const newSpecs  = agentState.specialists;
+      for (const name of Object.keys(newSpecs)) {
+        const prevStatus = prevSpecs[name]?.status;
+        const newStatus  = newSpecs[name]?.status;
+        if (prevStatus === 'running' && newStatus === 'completed') {
+          new Notification('Agent completed', { body: `${name} finished task`, tag: `complete-${name}`, silent: false });
+        }
+        if (prevStatus === 'running' && newStatus === 'error') {
+          new Notification('Agent error', { body: `${name} encountered an error`, tag: `error-${name}`, silent: false });
+        }
+      }
+    }
+    prevStateRef.current = agentState;
+  }, [agentState, notifMuted]);
+
+  // Toggle notification mute
+  const toggleMute = useCallback(() => {
+    setNotifMuted((m) => {
+      const next = !m;
+      localStorage.setItem('dashboard-notif-muted', String(next));
+      return next;
+    });
+  }, []);
+
+  // Fetch session history
+  const fetchSessions = useCallback(() => {
+    fetch('http://localhost:3001/api/sessions')
+      .then((r) => r.json())
+      .then(setSessions)
+      .catch(() => {});
+  }, []);
+
+  // Archive current session
+  const archiveSession = useCallback(() => {
+    fetch('http://localhost:3001/api/session/archive', { method: 'POST' })
+      .then((r) => r.json())
+      .then(() => fetchSessions())
+      .catch(() => {});
+  }, [fetchSessions]);
+
+  // Load sessions on mount
+  useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
   // WebSocket connection with auto-reconnect
   useEffect(() => {
@@ -817,12 +779,7 @@ export default function ClaudeCodeDashboard() {
 
     function connect() {
       socket = new WebSocket(wsUrl);
-
-      socket.onopen = () => {
-        setConnected(true);
-        reconnectDelay = 1000; // reset backoff on success
-      };
-
+      socket.onopen = () => { setConnected(true); reconnectDelay = 1000; };
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
@@ -831,23 +788,19 @@ export default function ClaudeCodeDashboard() {
           console.error('Failed to parse WebSocket message:', err);
         }
       };
-
       socket.onclose = () => {
         setConnected(false);
         if (!intentionalClose) {
-          // Exponential backoff: 1s, 2s, 4s, 8s, max 15s
           reconnectTimer = setTimeout(() => {
             reconnectDelay = Math.min(reconnectDelay * 2, 15000);
             connect();
           }, reconnectDelay);
         }
       };
-
-      socket.onerror = () => {}; // onclose will fire after this
+      socket.onerror = () => {};
     }
 
     connect();
-
     return () => {
       intentionalClose = true;
       clearTimeout(reconnectTimer);
@@ -857,22 +810,26 @@ export default function ClaudeCodeDashboard() {
 
   if (!agentState) return <BootScreen connected={connected} />;
 
-  const specialists      = Object.values(agentState.specialists);
-  const runningCount     = specialists.filter((a) => a.status === 'running').length;
-  const waitingCount     = specialists.filter((a) => a.status === 'waiting').length;
+  const specialists  = Object.values(agentState.specialists);
+  const runningCount = specialists.filter((a) => a.status === 'running').length;
 
   const elapsedTime =
     agentState.teamLead.startTime && agentState.teamLead.status === 'running'
-      ? formatTime(now - agentState.teamLead.startTime)
-      : null;
+      ? formatTime(now - agentState.teamLead.startTime) : null;
 
   const sessionAge = formatTime(now - agentState.globalMetrics.sessionStartTime);
 
-  // Sort helper: running > waiting > completed > idle
+  // Status counts for filter bar
+  const statusCounts = { all: specialists.length, running: 0, error: 0, completed: 0, idle: 0 };
+  specialists.forEach((a) => { statusCounts[a.status] = (statusCounts[a.status] || 0) + 1; });
+
   const statusSort = (a, b) => {
     const order = { running: 0, error: 1, waiting: 2, completed: 3, idle: 4 };
     return (order[a.status] ?? 4) - (order[b.status] ?? 4);
   };
+
+  const applyFilter = (agents) =>
+    statusFilter === 'all' ? agents : agents.filter((a) => a.status === statusFilter);
 
   // Split agents into hierarchy
   const seoSpecialistNames = ['seo-technical', 'seo-content', 'seo-schema', 'seo-sitemap', 'seo-geo', 'seo-performance', 'seo-visual'];
@@ -880,98 +837,80 @@ export default function ClaudeCodeDashboard() {
   const seoAgents     = specialists.filter((a) => seoSpecialistNames.includes(a.name));
   const directReports = specialists.filter((a) => a.name !== 'seo-manager' && !seoSpecialistNames.includes(a.name));
 
-  const sortedDirectReports = [...directReports].sort(statusSort);
-  const sortedSeoAgents     = [...seoAgents].sort(statusSort);
+  const filteredDirect = applyFilter([...directReports]).sort(statusSort);
+  const filteredSeo    = applyFilter([...seoAgents]).sort(statusSort);
 
   return (
     <div style={{
-      minHeight:       '100vh',
-      backgroundColor: T.bg,
-      fontFamily:      T.sans,
-      color:           T.textPrimary,
-      display:         'flex',
-      flexDirection:   'column',
+      minHeight: '100vh', backgroundColor: T.bg, fontFamily: T.sans,
+      color: T.textPrimary, display: 'flex', flexDirection: 'column',
     }}>
 
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <header style={{
-        display:         'flex',
-        alignItems:      'center',
-        justifyContent:  'space-between',
-        padding:         '0 18px',
-        height:          48,
-        backgroundColor: T.bgSurface,
-        borderBottom:    `1px solid ${T.border}`,
-        flexShrink:      0,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 18px', height: 48, backgroundColor: T.bgSurface,
+        borderBottom: `1px solid ${T.border}`, flexShrink: 0,
       }}>
-        {/* Brand */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Small accent square */}
           <div style={{
-            width:           20,
-            height:          20,
-            borderRadius:    5,
-            background:      `linear-gradient(135deg, ${T.green}, ${T.teal})`,
-            display:         'flex',
-            alignItems:      'center',
-            justifyContent:  'center',
+            width: 20, height: 20, borderRadius: 5,
+            background: `linear-gradient(135deg, ${T.green}, ${T.teal})`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: '#000' }}>A</span>
           </div>
-          <span style={{
-            fontFamily:  T.sans,
-            fontSize:    14,
-            fontWeight:  600,
-            color:       T.textPrimary,
-            letterSpacing: -0.2,
-          }}>
+          <span style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.textPrimary, letterSpacing: -0.2 }}>
             Agent Monitor
           </span>
-          <span style={{
-            fontFamily:      T.sans,
-            fontSize:        11,
-            color:           T.textMuted,
-            borderLeft:      `1px solid ${T.border}`,
-            paddingLeft:     10,
-            marginLeft:      2,
-          }}>
+          <span style={{ fontFamily: T.sans, fontSize: 11, color: T.textMuted, borderLeft: `1px solid ${T.border}`, paddingLeft: 10, marginLeft: 2 }}>
             Claude Code
           </span>
         </div>
 
-        {/* Right side */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{
-            fontFamily:  T.mono,
-            fontSize:    11,
-            color:       T.textMuted,
-          }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Notification mute toggle */}
+          <button
+            onClick={toggleMute}
+            title={notifMuted ? 'Notifications muted' : 'Notifications enabled'}
+            style={{
+              padding: '4px 8px', borderRadius: 4, border: `1px solid ${T.border}`,
+              backgroundColor: 'transparent', cursor: 'pointer',
+              fontFamily: T.sans, fontSize: 11, color: notifMuted ? T.textDim : T.amber,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {notifMuted ? 'Muted' : 'Alerts'}
+          </button>
+
+          {/* Session history toggle */}
+          <button
+            onClick={() => { setShowSessions(!showSessions); if (!showSessions) fetchSessions(); }}
+            style={{
+              padding: '4px 8px', borderRadius: 4, border: `1px solid ${T.border}`,
+              backgroundColor: showSessions ? T.bgOverlay : 'transparent', cursor: 'pointer',
+              fontFamily: T.sans, fontSize: 11, color: T.textMuted,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            History
+          </button>
+
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
             up {sessionAge}
           </span>
 
-          {/* Live / disconnected indicator */}
           <div style={{
-            display:         'flex',
-            alignItems:      'center',
-            gap:             6,
-            padding:         '4px 10px',
-            borderRadius:    99,
-            backgroundColor: connected ? T.greenDim : T.slateDim,
-            border:          `1px solid ${connected ? T.green + '30' : T.border}`,
+            display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+            borderRadius: 99, backgroundColor: connected ? T.greenDim : T.slateDim,
+            border: `1px solid ${connected ? T.green + '30' : T.border}`,
           }}>
             <div style={{
-              width:           6,
-              height:          6,
-              borderRadius:    '50%',
+              width: 6, height: 6, borderRadius: '50%',
               backgroundColor: connected ? T.green : T.slate,
-              animation:       connected ? 'connectBlink 2s ease-in-out infinite' : 'none',
+              animation: connected ? 'connectBlink 2s ease-in-out infinite' : 'none',
             }} />
-            <span style={{
-              fontFamily:  T.sans,
-              fontSize:    11,
-              fontWeight:  600,
-              color:       connected ? T.green : T.slate,
-            }}>
+            <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 600, color: connected ? T.green : T.slate }}>
               {connected ? 'Live' : 'Disconnected'}
             </span>
           </div>
@@ -983,23 +922,30 @@ export default function ClaudeCodeDashboard() {
         metrics={agentState.globalMetrics}
         activeAgentCount={runningCount}
         now={now}
+        onArchive={archiveSession}
       />
+
+      {/* ── Filter bar ────────────────────────────────────────────────────────── */}
+      <FilterBar filter={statusFilter} setFilter={setStatusFilter} counts={statusCounts} />
+
+      {/* ── Session history (collapsible) ─────────────────────────────────────── */}
+      {showSessions && (
+        <div style={{ borderBottom: `1px solid ${T.border}`, backgroundColor: T.bgSurface }}>
+          <SectionHeader label="Session History" right={`${sessions.length} sessions`} />
+          <SessionHistory sessions={sessions} />
+        </div>
+      )}
 
       {/* ── Body ──────────────────────────────────────────────────────────────── */}
       <div style={{
-        flex:    1,
-        display: 'grid',
-        gridTemplateColumns: '1fr 300px',
-        minHeight: 0,
-        overflow: 'hidden',
+        flex: 1, display: 'grid', gridTemplateColumns: '1fr 300px',
+        minHeight: 0, overflow: 'hidden',
       }}>
 
         {/* LEFT: orchestrator + specialist grid */}
         <div style={{
-          display:       'flex',
-          flexDirection: 'column',
-          borderRight:   `1px solid ${T.border}`,
-          overflowY:     'auto',
+          display: 'flex', flexDirection: 'column',
+          borderRight: `1px solid ${T.border}`, overflowY: 'auto',
         }}>
 
           {/* Team lead section */}
@@ -1014,67 +960,55 @@ export default function ClaudeCodeDashboard() {
               label="Direct Reports"
               right={`${directReports.filter(a => a.status === 'running').length} running · ${directReports.length} agents`}
             />
-            <div style={{
-              display:             'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap:                 10,
-              padding:             '12px 14px',
-            }}>
-              {sortedDirectReports.map((agent, i) => (
-                <SpecialistCard key={agent.name} agent={agent} index={i} now={now} />
-              ))}
-            </div>
+            {filteredDirect.length > 0 ? (
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gap: 10, padding: '12px 14px',
+              }}>
+                {filteredDirect.map((agent, i) => (
+                  <SpecialistCard key={agent.name} agent={agent} index={i} now={now} />
+                ))}
+              </div>
+            ) : (
+              <div style={{ padding: '16px', textAlign: 'center', fontFamily: T.sans, fontSize: 12, color: T.textDim }}>
+                No {statusFilter} agents
+              </div>
+            )}
           </div>
 
-          {/* SEO Team section — nested under seo-manager */}
+          {/* SEO Team section */}
           <div style={{ flex: 1 }}>
             <SectionHeader
               label="SEO Team"
               right={`${seoAgents.filter(a => a.status === 'running').length} running · ${seoAgents.length + 1} agents`}
             />
-
-            {/* seo-manager sub-orchestrator card */}
-            {seoManager && (
-              <SubOrchestratorCard agent={seoManager} childCount={seoAgents.length} />
+            {seoManager && <SubOrchestratorCard agent={seoManager} childCount={seoAgents.length} />}
+            {filteredSeo.length > 0 ? (
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+                gap: 10, padding: '8px 14px 12px 28px', marginLeft: 14,
+                borderLeft: `2px solid ${seoManager && seoManager.status === 'running' ? T.green + '40' : T.border}`,
+                transition: 'border-color 0.3s ease',
+              }}>
+                {filteredSeo.map((agent, i) => (
+                  <SpecialistCard key={agent.name} agent={agent} index={i} compact now={now} />
+                ))}
+              </div>
+            ) : (
+              <div style={{ padding: '16px 28px', marginLeft: 14, borderLeft: `2px solid ${T.border}`, fontFamily: T.sans, fontSize: 12, color: T.textDim }}>
+                No {statusFilter} agents
+              </div>
             )}
-
-            {/* SEO specialists grid — indented under seo-manager */}
-            <div style={{
-              display:             'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-              gap:                 10,
-              padding:             '8px 14px 12px 28px',
-              marginLeft:          14,
-              borderLeft:          `2px solid ${seoManager && seoManager.status === 'running' ? T.green + '40' : T.border}`,
-              transition:          'border-color 0.3s ease',
-            }}>
-              {sortedSeoAgents.map((agent, i) => (
-                <SpecialistCard key={agent.name} agent={agent} index={i} compact now={now} />
-              ))}
-            </div>
           </div>
         </div>
 
         {/* RIGHT: task queue */}
-        <div style={{
-          display:       'flex',
-          flexDirection: 'column',
-          overflowY:     'auto',
-        }}>
-          <SectionHeader
-            label="Task Queue"
-            right={`${agentState.taskQueue.length} events`}
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+          <SectionHeader label="Task Queue" right={`${agentState.taskQueue.length} events`} />
           {agentState.taskQueue.length > 0 ? (
             <TaskQueue tasks={agentState.taskQueue} />
           ) : (
-            <div style={{
-              padding:    '24px 16px',
-              fontFamily: T.sans,
-              fontSize:   12,
-              color:      T.textDim,
-              textAlign:  'center',
-            }}>
+            <div style={{ padding: '24px 16px', fontFamily: T.sans, fontSize: 12, color: T.textDim, textAlign: 'center' }}>
               No events yet
             </div>
           )}
@@ -1083,14 +1017,9 @@ export default function ClaudeCodeDashboard() {
 
       {/* ── Status bar ────────────────────────────────────────────────────────── */}
       <footer style={{
-        display:         'flex',
-        alignItems:      'center',
-        justifyContent:  'space-between',
-        padding:         '0 18px',
-        height:          32,
-        backgroundColor: T.bgSurface,
-        borderTop:       `1px solid ${T.border}`,
-        flexShrink:      0,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 18px', height: 32, backgroundColor: T.bgSurface,
+        borderTop: `1px solid ${T.border}`, flexShrink: 0,
       }}>
         <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim }}>
           ws://localhost:3001/ws

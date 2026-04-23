@@ -74,6 +74,25 @@ db.exec(`
     status    TEXT NOT NULL DEFAULT 'in_progress',
     tokens    INTEGER DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    startTime       INTEGER NOT NULL,
+    endTime         INTEGER NOT NULL,
+    totalTokens     INTEGER NOT NULL DEFAULT 0,
+    totalCost       REAL NOT NULL DEFAULT 0,
+    completedTasks  INTEGER NOT NULL DEFAULT 0,
+    agentSnapshot   TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS agent_logs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent      TEXT NOT NULL,
+    timestamp  INTEGER NOT NULL,
+    output     TEXT NOT NULL,
+    event_type TEXT NOT NULL DEFAULT 'complete'
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_logs_agent ON agent_logs(agent);
 `);
 
 // Seed agents if table is empty
@@ -107,8 +126,13 @@ function loadState() {
     tokensUsed: 0, startTime: null, taskCount: 0,
   };
 
+  // Attach latest log output to each agent
+  const logMap = {};
+  stmts.latestLogs.all().forEach((row) => { logMap[row.agent] = row.output; });
+
   const specialists = {};
   agents.filter((a) => a.name !== 'team-lead').forEach((a) => {
+    a.lastOutput = logMap[a.name] || null;
     specialists[a.name] = a;
   });
 
@@ -163,12 +187,33 @@ const stmts = {
   resetSession: db.prepare(`
     UPDATE metrics SET totalTokens = 0, totalCost = 0, completedTasks = 0, sessionStartTime = ? WHERE id = 1
   `),
+  insertLog: db.prepare(`
+    INSERT INTO agent_logs (agent, timestamp, output, event_type) VALUES (?, ?, ?, ?)
+  `),
+  latestLogs: db.prepare(`
+    SELECT agent, output FROM agent_logs WHERE id IN (
+      SELECT MAX(id) FROM agent_logs GROUP BY agent
+    )
+  `),
+  agentLogs: db.prepare(`
+    SELECT id, agent, timestamp, output, event_type FROM agent_logs
+    WHERE agent = ? ORDER BY id DESC LIMIT 20
+  `),
+  archiveSession: db.prepare(`
+    INSERT INTO sessions (startTime, endTime, totalTokens, totalCost, completedTasks, agentSnapshot)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  listSessions: db.prepare(`
+    SELECT id, startTime, endTime, totalTokens, totalCost, completedTasks FROM sessions
+    ORDER BY id DESC LIMIT 50
+  `),
+  getSession: db.prepare(`SELECT * FROM sessions WHERE id = ?`),
 };
 
 // ── Event handler ──────────────────────────────────────────────────
 
 function handleEvent(evt) {
-  const { type, agent, task, tokens } = evt;
+  const { type, agent, task, tokens, output } = evt;
 
   // Auto-register unknown agents
   if (agent && !stmts.agentExists.get(agent)) {
@@ -202,6 +247,12 @@ function handleEvent(evt) {
   if (tokens && tokens > 0) {
     stmts.addTokens.run(tokens, agent);
     stmts.addGlobalTokens.run(tokens, tokens);
+  }
+
+  // Store agent output log if provided
+  if (output && agent) {
+    const eventType = type === 'agent_error' ? 'error' : 'complete';
+    stmts.insertLog.run(agent, Date.now(), output.slice(0, 4000), eventType);
   }
 
   broadcastState();
@@ -289,6 +340,45 @@ const server = http.createServer((req, res) => {
     broadcastState();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, message: 'State reset' }));
+  }
+
+  // Session archive — snapshot current session, then reset
+  if (req.url === '/api/session/archive' && req.method === 'POST') {
+    const metrics = db.prepare('SELECT * FROM metrics WHERE id = 1').get();
+    const agents = db.prepare('SELECT * FROM agents').all();
+    const result = stmts.archiveSession.run(
+      metrics.sessionStartTime, Date.now(),
+      metrics.totalTokens, metrics.totalCost, metrics.completedTasks,
+      JSON.stringify(agents)
+    );
+    // Reset current session
+    db.prepare("UPDATE agents SET status = 'idle', currentTask = NULL, tokensUsed = 0, startTime = NULL, taskCount = 0").run();
+    db.prepare('DELETE FROM task_queue').run();
+    stmts.resetSession.run(Date.now());
+    broadcastState();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, sessionId: result.lastInsertRowid }));
+  }
+
+  if (req.url === '/api/sessions' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(stmts.listSessions.all()));
+  }
+
+  const sessionMatch = req.url.match(/^\/api\/sessions\/(\d+)$/);
+  if (sessionMatch && req.method === 'GET') {
+    const row = stmts.getSession.get(parseInt(sessionMatch[1]));
+    if (!row) { res.writeHead(404); return res.end('Not Found'); }
+    row.agentSnapshot = JSON.parse(row.agentSnapshot);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(row));
+  }
+
+  const logsMatch = req.url.match(/^\/api\/logs\/([a-z0-9-]+)$/);
+  if (logsMatch && req.method === 'GET') {
+    const logs = stmts.agentLogs.all(logsMatch[1]);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(logs));
   }
 
   if (req.url === '/health') {
