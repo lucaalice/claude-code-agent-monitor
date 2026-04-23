@@ -38,6 +38,10 @@ styleSheet.textContent = `
     50%  { border-left-color: rgba(52,211,153,1); }
     100% { border-left-color: rgba(52,211,153,0.6); }
   }
+  @keyframes breatheRed {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0), 0 0 6px rgba(248,113,113,0.1); }
+    50%       { box-shadow: 0 0 0 3px rgba(248,113,113,0.06), 0 0 14px rgba(248,113,113,0.2); }
+  }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
@@ -73,6 +77,7 @@ const T = {
   slateDim:    'rgba(100,116,139,0.12)',
   purple:      '#a78bfa',   // violet-400 — metrics accent
   red:         '#f87171',   // red-400
+  redDim:      'rgba(248,113,113,0.12)',
 
   // Text hierarchy
   textPrimary: '#f1f5f9',   // slate-100
@@ -112,6 +117,7 @@ const STATUS_META = {
   running:   { color: T.green,  dim: T.greenDim,  label: 'Running',   dot: T.green  },
   completed: { color: T.blue,   dim: T.blueDim,   label: 'Done',      dot: T.blue   },
   waiting:   { color: T.amber,  dim: T.amberDim,  label: 'Waiting',   dot: T.amber  },
+  error:     { color: T.red,    dim: T.redDim,    label: 'Error',     dot: T.red    },
   idle:      { color: T.slate,  dim: T.slateDim,  label: 'Idle',      dot: T.slate  },
 };
 const getStatus = (s) => STATUS_META[s] || STATUS_META.idle;
@@ -522,18 +528,22 @@ function SubOrchestratorCard({ agent, childCount }) {
 }
 
 // ─── Specialist card (grid item) ─────────────────────────────────────────────
-function SpecialistCard({ agent, index, compact }) {
+function SpecialistCard({ agent, index, compact, now }) {
   const isRunning = agent.status === 'running';
   const isWaiting = agent.status === 'waiting';
+  const isError   = agent.status === 'error';
   const m = getStatus(agent.status);
+  const elapsed = isRunning && agent.startTime ? formatTime(now - agent.startTime) : null;
 
   return (
     <div style={{
       borderRadius:    7,
-      border:          `1px solid ${isRunning ? T.green + '35' : isWaiting ? T.amber + '25' : T.border}`,
+      border:          `1px solid ${isError ? T.red + '35' : isRunning ? T.green + '35' : isWaiting ? T.amber + '25' : T.border}`,
       backgroundColor: T.bgSurfaceHi,
       overflow:        'hidden',
-      animation:       isRunning
+      animation:       isError
+        ? 'breatheRed 3s ease-in-out infinite, fadeSlideIn 0.25s ease-out'
+        : isRunning
         ? 'breatheGreen 3s ease-in-out infinite, fadeSlideIn 0.25s ease-out'
         : isWaiting
         ? 'breatheAmber 4s ease-in-out infinite, fadeSlideIn 0.25s ease-out'
@@ -547,7 +557,9 @@ function SpecialistCard({ agent, index, compact }) {
         justifyContent:  'space-between',
         padding:         '8px 12px',
         borderBottom:    `1px solid ${T.border}`,
-        backgroundColor: isRunning
+        backgroundColor: isError
+          ? 'rgba(248,113,113,0.04)'
+          : isRunning
           ? 'rgba(52,211,153,0.04)'
           : isWaiting
           ? 'rgba(251,191,36,0.04)'
@@ -566,8 +578,8 @@ function SpecialistCard({ agent, index, compact }) {
           <span style={{
             fontFamily:    T.mono,
             fontSize:      12,
-            fontWeight:    isRunning ? 700 : 500,
-            color:         isRunning ? T.green : isWaiting ? T.amber : T.textSecond,
+            fontWeight:    isRunning || isError ? 700 : 500,
+            color:         isError ? T.red : isRunning ? T.green : isWaiting ? T.amber : T.textSecond,
             overflow:      'hidden',
             textOverflow:  'ellipsis',
             whiteSpace:    'nowrap',
@@ -576,7 +588,19 @@ function SpecialistCard({ agent, index, compact }) {
             {agent.name}
           </span>
         </div>
-        <StatusBadge status={agent.status} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {elapsed && (
+            <span style={{
+              fontFamily:  T.mono,
+              fontSize:    10,
+              color:       T.amber,
+              fontWeight:  600,
+            }}>
+              {elapsed}
+            </span>
+          )}
+          <StatusBadge status={agent.status} />
+        </div>
       </div>
 
       {/* Card body: task + stats */}
@@ -846,7 +870,7 @@ export default function ClaudeCodeDashboard() {
 
   // Sort helper: running > waiting > completed > idle
   const statusSort = (a, b) => {
-    const order = { running: 0, waiting: 1, completed: 2, idle: 3 };
+    const order = { running: 0, error: 1, waiting: 2, completed: 3, idle: 4 };
     return (order[a.status] ?? 4) - (order[b.status] ?? 4);
   };
 
@@ -997,7 +1021,7 @@ export default function ClaudeCodeDashboard() {
               padding:             '12px 14px',
             }}>
               {sortedDirectReports.map((agent, i) => (
-                <SpecialistCard key={agent.name} agent={agent} index={i} />
+                <SpecialistCard key={agent.name} agent={agent} index={i} now={now} />
               ))}
             </div>
           </div>
@@ -1025,7 +1049,7 @@ export default function ClaudeCodeDashboard() {
               transition:          'border-color 0.3s ease',
             }}>
               {sortedSeoAgents.map((agent, i) => (
-                <SpecialistCard key={agent.name} agent={agent} index={i} compact />
+                <SpecialistCard key={agent.name} agent={agent} index={i} compact now={now} />
               ))}
             </div>
           </div>

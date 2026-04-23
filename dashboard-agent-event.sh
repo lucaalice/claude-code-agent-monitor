@@ -15,7 +15,13 @@ description=$(echo "$input" | jq -r '.tool_input.description // empty')
 if [ "$hook_event" = "PreToolUse" ]; then
   event_type="agent_start"
 elif [ "$hook_event" = "PostToolUse" ]; then
-  event_type="agent_complete"
+  # Check if the agent errored — look for error/failure indicators in tool_response
+  is_error=$(echo "$input" | jq -r '.tool_response.is_error // false' 2>/dev/null || echo "false")
+  if [ "$is_error" = "true" ]; then
+    event_type="agent_error"
+  else
+    event_type="agent_complete"
+  fi
 else
   exit 0
 fi

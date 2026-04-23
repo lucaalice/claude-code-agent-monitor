@@ -12,6 +12,9 @@ Real-time dashboard for monitoring Claude Code subagent activity. Built with Nod
 - **SQLite persistence** -- agent state, metrics, and task history survive server restarts
 - **Token and cost tracking** -- extracts usage data from hook responses, tracks per-agent and global totals
 - **Auto-reconnect** -- frontend reconnects with exponential backoff (1s-15s) if the server restarts
+- **Error state detection** -- agents that fail show a red error indicator with breathing animation; hook script auto-detects `is_error` from PostToolUse responses
+- **Live elapsed timers** -- each running specialist card shows a ticking timer based on `startTime`
+- **Dynamic agent registration** -- unknown agents from hook events are auto-registered; no hardcoded list required
 - **Metric strip** -- total tokens, estimated cost, active agent count, completed tasks, session uptime
 - **Demo mode** -- simulates agent activity without Claude Code running; useful for UI testing and demos
 - **REST API** -- `POST /api/event` to inject events, `GET /api/state` to snapshot, `POST /api/reset` to clear state
@@ -127,7 +130,7 @@ Request body (JSON):
 
 ```json
 {
-  "type":   "agent_start | agent_complete | agent_idle",
+  "type":   "agent_start | agent_complete | agent_error | agent_idle",
   "agent":  "<agent-name>",
   "task":   "<task description>",
   "tokens": 1500
@@ -136,8 +139,8 @@ Request body (JSON):
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | yes | One of `agent_start`, `agent_complete`, `agent_idle` |
-| `agent` | string | yes | Must match a name in the agent team list |
+| `type` | string | yes | One of `agent_start`, `agent_complete`, `agent_error`, `agent_idle` |
+| `agent` | string | yes | Agent name — unknown agents are auto-registered |
 | `task` | string | no | Human-readable task description |
 | `tokens` | number | no | Token count to add to global totals |
 
@@ -147,6 +150,7 @@ Event type effects:
 |------|--------|
 | `agent_start` | Sets status to `running`, records `startTime`, appends task to queue |
 | `agent_complete` | Sets status to `completed`, increments `taskCount` and `completedTasks` |
+| `agent_error` | Sets status to `error`, increments `taskCount` and `completedTasks`, shows red indicator |
 | `agent_idle` | Sets status to `idle`, clears `currentTask` |
 
 ### WebSocket

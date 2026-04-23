@@ -141,6 +141,9 @@ const stmts = {
   setIdle: db.prepare(`
     UPDATE agents SET status = 'idle', currentTask = NULL WHERE name = ?
   `),
+  setError: db.prepare(`
+    UPDATE agents SET status = 'error', taskCount = taskCount + 1 WHERE name = ?
+  `),
   addTokens: db.prepare(`
     UPDATE agents SET tokensUsed = tokensUsed + ? WHERE name = ?
   `),
@@ -186,6 +189,14 @@ function handleEvent(evt) {
 
   if (type === 'agent_idle') {
     stmts.setIdle.run(agent);
+  }
+
+  if (type === 'agent_error') {
+    stmts.setError.run(agent);
+    stmts.incCompleted.run();
+    if (task) {
+      stmts.insertTask.run(task, agent, Date.now(), tokens || 0);
+    }
   }
 
   if (tokens && tokens > 0) {
