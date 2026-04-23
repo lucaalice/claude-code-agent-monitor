@@ -29,6 +29,10 @@ fi
 # Extract agent output and token usage from PostToolUse response
 tokens=0
 agent_output=""
+input_tokens=0
+output_tokens=0
+cache_read=0
+cache_creation=0
 if [ "$hook_event" = "PostToolUse" ]; then
   # Agent output is in .tool_response.content[].text
   agent_output=$(echo "$input" | jq -r '[.tool_response.content[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null | cut -c 1-4000)
@@ -38,6 +42,12 @@ if [ "$hook_event" = "PostToolUse" ]; then
   if [ -n "$raw_tokens" ] && [ "$raw_tokens" -gt 0 ] 2>/dev/null; then
     tokens=$raw_tokens
   fi
+
+  # Detailed usage breakdown for model-based pricing
+  input_tokens=$(echo "$input" | jq -r '.tool_response.usage.input_tokens // 0' 2>/dev/null || echo "0")
+  output_tokens=$(echo "$input" | jq -r '.tool_response.usage.output_tokens // 0' 2>/dev/null || echo "0")
+  cache_read=$(echo "$input" | jq -r '.tool_response.usage.cache_read_input_tokens // 0' 2>/dev/null || echo "0")
+  cache_creation=$(echo "$input" | jq -r '.tool_response.usage.cache_creation_input_tokens // 0' 2>/dev/null || echo "0")
 fi
 
 # Mark team-lead as running when any agent starts, idle when agent completes
@@ -58,8 +68,13 @@ elif [ "$event_type" = "agent_complete" ] || [ "$event_type" = "agent_error" ]; 
   fi
 fi
 
-# Ensure tokens is a valid number for jq --argjson
-tokens=$(echo "$tokens" | grep -E '^[0-9]+$' || echo "0")
+# Ensure numeric fields are valid for jq --argjson
+validate_num() { echo "$1" | grep -E '^[0-9]+$' || echo "0"; }
+tokens=$(validate_num "$tokens")
+input_tokens=$(validate_num "$input_tokens")
+output_tokens=$(validate_num "$output_tokens")
+cache_read=$(validate_num "$cache_read")
+cache_creation=$(validate_num "$cache_creation")
 [ -z "$tokens" ] && tokens=0
 
 # Fire and forget — don't block Claude Code if dashboard is down
@@ -71,7 +86,11 @@ curl -s -X POST "$DASHBOARD_URL" \
     --arg task "$description" \
     --argjson tokens "$tokens" \
     --arg output "$agent_output" \
-    '{type: $type, agent: $agent, task: $task, tokens: $tokens, output: $output}'
+    --argjson input_tokens "$input_tokens" \
+    --argjson output_tokens "$output_tokens" \
+    --argjson cache_read "$cache_read" \
+    --argjson cache_creation "$cache_creation" \
+    '{type: $type, agent: $agent, task: $task, tokens: $tokens, output: $output, usage: {input_tokens: $input_tokens, output_tokens: $output_tokens, cache_read: $cache_read, cache_creation: $cache_creation}}'
   )" \
   --connect-timeout 1 \
   --max-time 2 \

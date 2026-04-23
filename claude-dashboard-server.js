@@ -20,6 +20,26 @@ const PORT = process.env.DASHBOARD_PORT || 3001;
 const DEMO = process.argv.includes('--demo');
 const DB_PATH = path.join(__dirname, 'dashboard.db');
 
+// ── Model-based pricing (per 1M tokens) ────────────────────────────
+
+const MODEL_PRICING = {
+  opus:      { input: 15.00, output: 75.00, cacheRead: 1.50,  cacheCreation: 18.75 },
+  sonnet:    { input:  3.00, output: 15.00, cacheRead: 0.30,  cacheCreation:  3.75 },
+  haiku:     { input:  0.80, output:  4.00, cacheRead: 0.08,  cacheCreation:  1.00 },
+  inherited: { input:  3.00, output: 15.00, cacheRead: 0.30,  cacheCreation:  3.75 }, // default to sonnet rates
+};
+
+function calculateCost(model, usage) {
+  const rates = MODEL_PRICING[model] || MODEL_PRICING.sonnet;
+  const { input_tokens = 0, output_tokens = 0, cache_read = 0, cache_creation = 0 } = usage;
+  return (
+    (input_tokens * rates.input / 1_000_000) +
+    (output_tokens * rates.output / 1_000_000) +
+    (cache_read * rates.cacheRead / 1_000_000) +
+    (cache_creation * rates.cacheCreation / 1_000_000)
+  );
+}
+
 // ── Agent team definition ──────────────────────────────────────────
 
 const agentTeam = [
@@ -93,7 +113,52 @@ db.exec(`
     event_type TEXT NOT NULL DEFAULT 'complete'
   );
   CREATE INDEX IF NOT EXISTS idx_agent_logs_agent ON agent_logs(agent);
+
+  CREATE TABLE IF NOT EXISTS timeline (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent     TEXT NOT NULL,
+    task      TEXT,
+    startTime INTEGER NOT NULL,
+    endTime   INTEGER,
+    status    TEXT NOT NULL DEFAULT 'running'
+  );
+  CREATE INDEX IF NOT EXISTS idx_timeline_agent ON timeline(agent);
+  CREATE INDEX IF NOT EXISTS idx_timeline_starttime ON timeline(startTime);
 `);
+
+// ── Schema migrations — add all-time columns if missing ──────────
+
+function columnExists(table, column) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  return cols.some((c) => c.name === column);
+}
+
+if (!columnExists('metrics', 'allTimeTokens')) {
+  db.exec(`
+    ALTER TABLE metrics ADD COLUMN allTimeTokens     INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE metrics ADD COLUMN allTimeCost        REAL    NOT NULL DEFAULT 0;
+    ALTER TABLE metrics ADD COLUMN allTimeCompleted   INTEGER NOT NULL DEFAULT 0;
+  `);
+  // Backfill from current session + archived sessions
+  const current = db.prepare('SELECT totalTokens, totalCost, completedTasks FROM metrics WHERE id = 1').get();
+  const archived = db.prepare('SELECT COALESCE(SUM(totalTokens),0) as t, COALESCE(SUM(totalCost),0) as c, COALESCE(SUM(completedTasks),0) as d FROM sessions').get();
+  db.prepare('UPDATE metrics SET allTimeTokens = ?, allTimeCost = ?, allTimeCompleted = ? WHERE id = 1').run(
+    current.totalTokens + archived.t,
+    current.totalCost + archived.c,
+    current.completedTasks + archived.d
+  );
+  console.log('[MIGRATION] Added allTime columns to metrics, backfilled from history');
+}
+
+if (!columnExists('agents', 'allTimeTokens')) {
+  db.exec(`
+    ALTER TABLE agents ADD COLUMN allTimeTokens INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE agents ADD COLUMN allTimeTasks  INTEGER NOT NULL DEFAULT 0;
+  `);
+  // Backfill from current values
+  db.prepare('UPDATE agents SET allTimeTokens = tokensUsed, allTimeTasks = taskCount').run();
+  console.log('[MIGRATION] Added allTime columns to agents, backfilled');
+}
 
 // Seed agents if table is empty
 const agentCount = db.prepare('SELECT COUNT(*) as c FROM agents').get().c;
@@ -119,7 +184,7 @@ if (metricsExists === 0) {
 function loadState() {
   const agents = db.prepare('SELECT * FROM agents').all();
   const metrics = db.prepare('SELECT * FROM metrics WHERE id = 1').get();
-  const tasks = db.prepare('SELECT * FROM task_queue ORDER BY id DESC LIMIT 50').all().reverse();
+  const tasks = db.prepare('SELECT * FROM task_queue ORDER BY id DESC LIMIT 200').all().reverse();
 
   const teamLead = agents.find((a) => a.name === 'team-lead') || {
     name: 'team-lead', status: 'idle', currentTask: null, model: 'opus',
@@ -142,11 +207,15 @@ function loadState() {
     teamLead,
     specialists,
     globalMetrics: {
-      totalTokens: metrics.totalTokens,
-      totalCost: metrics.totalCost,
+      totalTokens: metrics.allTimeTokens,
+      totalCost: metrics.allTimeCost,
       sessionStartTime: metrics.sessionStartTime,
       activeAgents,
-      completedTasks: metrics.completedTasks,
+      completedTasks: metrics.allTimeCompleted,
+      // Session-scoped metrics for reference
+      sessionTokens: metrics.totalTokens,
+      sessionCost: metrics.totalCost,
+      sessionCompleted: metrics.completedTasks,
     },
     taskQueue: tasks,
   };
@@ -169,16 +238,19 @@ const stmts = {
     UPDATE agents SET status = 'error', taskCount = taskCount + 1 WHERE name = ?
   `),
   addTokens: db.prepare(`
-    UPDATE agents SET tokensUsed = tokensUsed + ? WHERE name = ?
+    UPDATE agents SET tokensUsed = tokensUsed + ?, allTimeTokens = allTimeTokens + ? WHERE name = ?
   `),
   addGlobalTokens: db.prepare(`
-    UPDATE metrics SET totalTokens = totalTokens + ? WHERE id = 1
+    UPDATE metrics SET totalTokens = totalTokens + ?, allTimeTokens = allTimeTokens + ? WHERE id = 1
   `),
   updateCost: db.prepare(`
-    UPDATE metrics SET totalCost = totalTokens * 3.0 / 1000000.0 WHERE id = 1
+    UPDATE metrics SET totalCost = totalCost + ?, allTimeCost = allTimeCost + ? WHERE id = 1
   `),
   incCompleted: db.prepare(`
-    UPDATE metrics SET completedTasks = completedTasks + 1 WHERE id = 1
+    UPDATE metrics SET completedTasks = completedTasks + 1, allTimeCompleted = allTimeCompleted + 1 WHERE id = 1
+  `),
+  incAgentAllTimeTasks: db.prepare(`
+    UPDATE agents SET allTimeTasks = allTimeTasks + 1 WHERE name = ?
   `),
   insertTask: db.prepare(`
     INSERT INTO task_queue (task, agent, timestamp, status, tokens) VALUES (?, ?, ?, ?, ?)
@@ -217,20 +289,36 @@ const stmts = {
     ORDER BY id DESC LIMIT 50
   `),
   getSession: db.prepare(`SELECT * FROM sessions WHERE id = ?`),
+  getAgentModel: db.prepare('SELECT model FROM agents WHERE name = ?'),
+  countRunning: db.prepare("SELECT COUNT(*) as c FROM agents WHERE status='running' AND name != 'team-lead'"),
+  timelineStart: db.prepare(`
+    INSERT INTO timeline (agent, task, startTime, status) VALUES (?, ?, ?, 'running')
+  `),
+  timelineEnd: db.prepare(`
+    UPDATE timeline SET endTime = ?, status = ?
+    WHERE id = (SELECT MAX(id) FROM timeline WHERE agent = ? AND status = 'running')
+  `),
+  timelineAll: db.prepare(`
+    SELECT * FROM timeline
+    WHERE startTime >= (SELECT sessionStartTime FROM metrics WHERE id = 1)
+    ORDER BY startTime ASC LIMIT 500
+  `),
 };
 
 // ── Event handler ──────────────────────────────────────────────────
 
 function handleEvent(evt) {
-  const { type, agent, task, tokens, output } = evt;
+  const { type, agent, task, tokens, output, usage } = evt;
+  if (!type || !agent || typeof agent !== 'string') return;
 
   // Auto-register unknown agents
-  if (agent && !stmts.agentExists.get(agent)) {
+  if (!stmts.agentExists.get(agent)) {
     stmts.insertAgent.run(agent, 'sonnet');
   }
 
   if (type === 'agent_start') {
     stmts.setRunning.run(Date.now(), task || null, agent);
+    stmts.timelineStart.run(agent, task || null, Date.now());
     if (task) {
       stmts.insertTask.run(task, agent, Date.now(), 'in_progress', tokens || 0);
     }
@@ -239,25 +327,44 @@ function handleEvent(evt) {
   if (type === 'agent_complete') {
     stmts.setCompleted.run(agent);
     stmts.incCompleted.run();
+    stmts.incAgentAllTimeTasks.run(agent);
     stmts.completeLatestTask.run(agent);
-    // Log completion event in task queue
+    stmts.timelineEnd.run(Date.now(), 'completed', agent);
     stmts.insertTask.run(`Completed: ${task || agent}`, agent, Date.now(), 'completed', tokens || 0);
   }
 
   if (type === 'agent_idle') {
+    // Only idle if no other specialists are still running (prevents premature team-lead idle)
+    if (agent === 'team-lead') {
+      const stillRunning = stmts.countRunning.get().c;
+      if (stillRunning > 0) return; // other agents still working
+    }
     stmts.setIdle.run(agent);
+    stmts.timelineEnd.run(Date.now(), 'completed', agent);
   }
 
   if (type === 'agent_error') {
     stmts.setError.run(agent);
+    stmts.incAgentAllTimeTasks.run(agent);
     stmts.errorLatestTask.run(agent);
+    stmts.timelineEnd.run(Date.now(), 'error', agent);
     stmts.insertTask.run(`Error: ${task || agent}`, agent, Date.now(), 'error', tokens || 0);
   }
 
   if (tokens && tokens > 0) {
-    stmts.addTokens.run(tokens, agent);
-    stmts.addGlobalTokens.run(tokens);
-    stmts.updateCost.run();
+    stmts.addTokens.run(tokens, tokens, agent);
+    stmts.addGlobalTokens.run(tokens, tokens);
+
+    // Model-based cost calculation
+    const agentRow = stmts.getAgentModel.get(agent);
+    const model = agentRow ? agentRow.model : 'sonnet';
+    let cost = 0;
+    if (usage && typeof usage.input_tokens === 'number') {
+      cost = calculateCost(model, usage);
+    } else {
+      cost = tokens * 3.0 / 1_000_000;
+    }
+    stmts.updateCost.run(cost, cost);
   }
 
   // Store agent output log if provided
@@ -329,11 +436,14 @@ const server = http.createServer((req, res) => {
 
   if (req.url === '/api/event' && req.method === 'POST') {
     let body = '';
+    let aborted = false;
     req.on('data', (chunk) => {
+      if (aborted) return;
       body += chunk;
-      if (body.length > 65536) { res.writeHead(413); res.end(); req.destroy(); return; }
+      if (body.length > 65536) { aborted = true; res.writeHead(413); res.end(); req.destroy(); }
     });
     req.on('end', () => {
+      if (aborted) return;
       try {
         const evt = JSON.parse(body);
         handleEvent(evt);
@@ -348,9 +458,9 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url === '/api/reset' && req.method === 'POST') {
-    // Reset all agents to idle and clear metrics
+    // Reset session-scoped agent fields but preserve allTime counters
     db.prepare("UPDATE agents SET status = 'idle', currentTask = NULL, tokensUsed = 0, startTime = NULL, taskCount = 0").run();
-    db.prepare('DELETE FROM task_queue').run();
+    db.prepare('DELETE FROM timeline').run();
     stmts.resetSession.run(Date.now());
     broadcastState();
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -366,9 +476,9 @@ const server = http.createServer((req, res) => {
       metrics.totalTokens, metrics.totalCost, metrics.completedTasks,
       JSON.stringify(agents)
     );
-    // Reset current session
+    // Reset session-scoped fields but preserve allTime counters and task_queue history
     db.prepare("UPDATE agents SET status = 'idle', currentTask = NULL, tokensUsed = 0, startTime = NULL, taskCount = 0").run();
-    db.prepare('DELETE FROM task_queue').run();
+    db.prepare('DELETE FROM timeline').run();
     stmts.resetSession.run(Date.now());
     broadcastState();
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -387,6 +497,11 @@ const server = http.createServer((req, res) => {
     try { row.agentSnapshot = JSON.parse(row.agentSnapshot); } catch { row.agentSnapshot = []; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(row));
+  }
+
+  if (req.url === '/api/timeline' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(stmts.timelineAll.all()));
   }
 
   const logsMatch = req.url.match(/^\/api\/logs\/([a-z0-9_-]+)$/);
@@ -446,7 +561,7 @@ if (DEMO) {
   function demoStep() {
     if (step < demoTasks.length) {
       const { agent, task } = demoTasks[step];
-      handleEvent({ type: 'agent_start', agent, task, tokens: Math.floor(Math.random() * 5000) + 1000 });
+      handleEvent({ type: 'agent_start', agent, task });
       console.log(`[DEMO] ${agent} started: ${task}`);
     }
 

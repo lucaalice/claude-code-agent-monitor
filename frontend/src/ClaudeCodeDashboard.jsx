@@ -298,9 +298,9 @@ function FilterBar({ filter, setFilter, counts }) {
 function MetricStrip({ metrics, activeAgentCount, now, onArchive }) {
   const items = [
     { key: 'Active Agents', value: activeAgentCount, unit: activeAgentCount === 1 ? 'agent' : 'agents', color: T.green, dim: T.greenDim },
-    { key: 'Tokens Used', value: formatTokens(metrics.totalTokens), unit: 'total', color: T.blue, dim: T.blueDim },
-    { key: 'Est. Cost', value: formatCost(metrics.totalCost), unit: 'USD', color: T.amber, dim: T.amberDim },
-    { key: 'Tasks Done', value: metrics.completedTasks, unit: 'completed', color: T.purple, dim: 'rgba(167,139,250,0.12)' },
+    { key: 'Tokens Used', value: formatTokens(metrics.totalTokens), sub: metrics.sessionTokens > 0 ? `session: ${formatTokens(metrics.sessionTokens)}` : null, unit: 'all time', color: T.blue, dim: T.blueDim },
+    { key: 'Est. Cost', value: formatCost(metrics.totalCost), sub: metrics.sessionCost > 0 ? `session: ${formatCost(metrics.sessionCost)}` : null, unit: 'all time', color: T.amber, dim: T.amberDim },
+    { key: 'Tasks Done', value: metrics.completedTasks, sub: metrics.sessionCompleted > 0 ? `session: ${metrics.sessionCompleted}` : null, unit: 'all time', color: T.purple, dim: 'rgba(167,139,250,0.12)' },
     { key: 'Session', value: formatTime(now - metrics.sessionStartTime), unit: 'elapsed', color: T.textSecond, dim: 'rgba(148,163,184,0.08)' },
   ];
 
@@ -322,6 +322,11 @@ function MetricStrip({ metrics, activeAgentCount, now, onArchive }) {
             <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim }}>
               {item.unit}
             </span>
+            {item.sub && (
+              <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, marginTop: 1 }}>
+                {item.sub}
+              </span>
+            )}
           </div>
         </React.Fragment>
       ))}
@@ -525,16 +530,16 @@ function SpecialistCard({ agent, index, compact, now }) {
 
         {isRunning && <ActivityBar active />}
 
-        {/* Stats row */}
+        {/* Stats row — all-time cumulative */}
         <div style={{ display: 'flex', gap: 12, paddingTop: 4, alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>Tasks</span>
-            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: T.textSecond }}>{agent.taskCount}</span>
+            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: T.textSecond }}>{agent.allTimeTasks || agent.taskCount}</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <span style={{ fontFamily: T.sans, fontSize: 9, color: T.textDim, textTransform: 'uppercase', letterSpacing: 0.5 }}>Tokens</span>
-            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: agent.tokensUsed ? T.blue : T.textDim }}>
-              {agent.tokensUsed ? formatTokens(agent.tokensUsed) : '—'}
+            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: (agent.allTimeTokens || agent.tokensUsed) ? T.blue : T.textDim }}>
+              {(agent.allTimeTokens || agent.tokensUsed) ? formatTokens(agent.allTimeTokens || agent.tokensUsed) : '—'}
             </span>
           </div>
           {/* Log toggle */}
@@ -575,7 +580,7 @@ function SpecialistCard({ agent, index, compact, now }) {
 
 // ─── Task queue ───────────────────────────────────────────────────────────────
 function TaskQueue({ tasks }) {
-  const slice = tasks.slice(-25).reverse();
+  const slice = tasks.slice(-100).reverse();
   const statusColor = (s) => s === 'completed' ? T.blue : s === 'error' ? T.red : T.green;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -649,6 +654,144 @@ function SessionHistory({ sessions, onClose }) {
   );
 }
 
+// ─── Agent timeline (Gantt chart) ────────────────────────────────────────────
+function AgentTimeline({ sessionStart, now }) {
+  const [entries, setEntries] = useState([]);
+  const [visible, setVisible] = useState(false);
+
+  const fetchTimeline = useCallback(() => {
+    fetch('http://localhost:3001/api/timeline')
+      .then((r) => r.json())
+      .then(setEntries)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    fetchTimeline();
+    const iv = setInterval(fetchTimeline, 5000);
+    return () => clearInterval(iv);
+  }, [visible, fetchTimeline]);
+
+  if (!visible) {
+    return (
+      <div style={{ borderBottom: `1px solid ${T.border}`, backgroundColor: T.bgSurface }}>
+        <div
+          onClick={() => setVisible(true)}
+          style={{
+            padding: '8px 16px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}
+        >
+          <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 600, color: T.textSecond, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+            Timeline
+          </span>
+          <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim }}>Click to expand</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div style={{ borderBottom: `1px solid ${T.border}`, backgroundColor: T.bgSurface }}>
+        <div
+          onClick={() => setVisible(false)}
+          style={{ padding: '8px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+        >
+          <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 600, color: T.textSecond, textTransform: 'uppercase', letterSpacing: 0.8 }}>Timeline</span>
+          <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim }}>Click to collapse</span>
+        </div>
+        <div style={{ padding: '12px 16px', fontFamily: T.sans, fontSize: 12, color: T.textDim, textAlign: 'center' }}>
+          No timeline data yet
+        </div>
+      </div>
+    );
+  }
+
+  // Calculate time range
+  const minTime = Math.min(...entries.map((e) => e.startTime));
+  const maxTime = Math.max(now, ...entries.map((e) => e.endTime || now));
+  const totalDuration = maxTime - minTime || 1;
+
+  // Group by agent
+  const agentGroups = {};
+  entries.forEach((e) => {
+    if (!agentGroups[e.agent]) agentGroups[e.agent] = [];
+    agentGroups[e.agent].push(e);
+  });
+  const agents = Object.keys(agentGroups).sort();
+
+  const ROW_H = 22;
+  const LABEL_W = 140;
+  const chartW = 'calc(100% - 140px)';
+
+  return (
+    <div style={{ borderBottom: `1px solid ${T.border}`, backgroundColor: T.bgSurface }}>
+      <div
+        onClick={() => setVisible(false)}
+        style={{ padding: '8px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${T.border}` }}
+      >
+        <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 600, color: T.green, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+          Timeline
+        </span>
+        <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim }}>
+          {formatTime(totalDuration)} span · {entries.length} events · Click to collapse
+        </span>
+      </div>
+
+      {/* Time axis labels */}
+      <div style={{ position: 'relative', height: 16, marginLeft: LABEL_W, marginRight: 8 }}>
+        {[0, 0.25, 0.5, 0.75, 1].map((pct) => (
+          <span key={pct} style={{
+            position: 'absolute', left: `${pct * 100}%`, transform: 'translateX(-50%)',
+            fontFamily: T.mono, fontSize: 9, color: T.textDim, whiteSpace: 'nowrap',
+          }}>
+            {formatTime((maxTime - minTime) * pct)}
+          </span>
+        ))}
+      </div>
+
+      {/* Rows */}
+      <div style={{ padding: '4px 8px 8px', maxHeight: 340, overflowY: 'auto' }}>
+        {agents.map((agentName) => (
+          <div key={agentName} style={{ display: 'flex', alignItems: 'center', height: ROW_H, gap: 0 }}>
+            <span style={{
+              width: LABEL_W, flexShrink: 0, fontFamily: T.mono, fontSize: 10,
+              color: T.textSecond, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              paddingRight: 8,
+            }}>
+              {agentName}
+            </span>
+            <div style={{ flex: 1, position: 'relative', height: 14, backgroundColor: T.bgOverlay, borderRadius: 3 }}>
+              {agentGroups[agentName].map((entry) => {
+                const start = entry.startTime - minTime;
+                const end = (entry.endTime || now) - minTime;
+                const left = (start / totalDuration) * 100;
+                const width = Math.max(((end - start) / totalDuration) * 100, 0.5);
+                const color = entry.status === 'error' ? T.red : entry.status === 'completed' ? T.blue : T.green;
+                const isRunning = !entry.endTime;
+                return (
+                  <div
+                    key={entry.id}
+                    title={`${agentName}: ${entry.task || 'task'} (${formatTime(end - start)})`}
+                    style={{
+                      position: 'absolute', top: 2, bottom: 2,
+                      left: `${left}%`, width: `${width}%`, minWidth: 3,
+                      backgroundColor: color, borderRadius: 2, opacity: 0.85,
+                      animation: isRunning ? 'pipPulse 2s ease-in-out infinite' : 'none',
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Boot / disconnected screen ───────────────────────────────────────────────
 function BootScreen({ connected }) {
   const [dots, setDots] = useState('');
@@ -712,6 +855,80 @@ export default function ClaudeCodeDashboard() {
     const iv = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(iv);
   }, []);
+
+  // ── Feature 3: Favicon + tab title badge ──
+  useEffect(() => {
+    if (!agentState) {
+      document.title = 'Agent Monitor';
+      return;
+    }
+    const active = agentState.globalMetrics.activeAgents || 0;
+    document.title = active > 0 ? `(${active}) Agent Monitor` : 'Agent Monitor';
+
+    // Canvas favicon with badge
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+
+    // Base icon — gradient rounded square
+    const grad = ctx.createLinearGradient(0, 0, 32, 32);
+    grad.addColorStop(0, '#34d399');
+    grad.addColorStop(1, '#22d3ee');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    // roundRect polyfill for older browsers
+    const r = 6, x = 2, y = 2, w = 28, h = 28;
+    if (ctx.roundRect) {
+      ctx.roundRect(x, y, w, h, r);
+    } else {
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+    ctx.fill();
+
+    // "A" letter
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('A', 16, 16);
+
+    // Badge circle with count (positioned within 32x32 bounds)
+    if (active > 0) {
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(24, 8, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(active > 9 ? '9+' : String(active), 24, 8);
+    }
+
+    // Set as favicon
+    let link = document.querySelector('link[rel="icon"][data-dynamic]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      link.setAttribute('data-dynamic', '1');
+      document.head.appendChild(link);
+    }
+    link.href = canvas.toDataURL('image/png');
+
+    return () => {
+      document.title = 'Agent Monitor';
+      const dynLink = document.querySelector('link[rel="icon"][data-dynamic]');
+      if (dynLink) dynLink.remove();
+    };
+  }, [agentState]);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -931,6 +1148,9 @@ export default function ClaudeCodeDashboard() {
 
       {/* ── Filter bar ────────────────────────────────────────────────────────── */}
       <FilterBar filter={statusFilter} setFilter={setStatusFilter} counts={statusCounts} />
+
+      {/* ── Agent timeline (Gantt chart) ──────────────────────────────────────── */}
+      <AgentTimeline sessionStart={agentState.globalMetrics.sessionStartTime} now={now} />
 
       {/* ── Session history (collapsible) ─────────────────────────────────────── */}
       {showSessions && (
