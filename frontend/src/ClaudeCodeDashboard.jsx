@@ -651,7 +651,7 @@ function BootScreen({ connected }) {
         }}>
           {connected
             ? `Waiting for data${dots}`
-            : `Connecting to ws://localhost:3001${dots}`}
+            : `Connecting${dots} (auto-reconnect enabled)`}
         </span>
       </div>
 
@@ -686,26 +686,52 @@ export default function ClaudeCodeDashboard() {
     return () => clearInterval(iv);
   }, []);
 
-  // WebSocket connection
+  // WebSocket connection with auto-reconnect
   useEffect(() => {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl      = `${wsProtocol}//localhost:3001/ws`;
-    const socket     = new WebSocket(wsUrl);
+    let socket       = null;
+    let reconnectDelay = 1000;
+    let reconnectTimer = null;
+    let intentionalClose = false;
 
-    socket.onopen    = () => setConnected(true);
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message.type === 'state_update') setAgentState(message.payload);
-      } catch (err) {
-        console.error('Failed to parse WebSocket message:', err);
-      }
-    };
-    socket.onclose  = () => setConnected(false);
-    socket.onerror  = (err) => console.error('WebSocket error:', err);
+    function connect() {
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        setConnected(true);
+        reconnectDelay = 1000; // reset backoff on success
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'state_update') setAgentState(message.payload);
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err);
+        }
+      };
+
+      socket.onclose = () => {
+        setConnected(false);
+        if (!intentionalClose) {
+          // Exponential backoff: 1s, 2s, 4s, 8s, max 15s
+          reconnectTimer = setTimeout(() => {
+            reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+            connect();
+          }, reconnectDelay);
+        }
+      };
+
+      socket.onerror = () => {}; // onclose will fire after this
+    }
+
+    connect();
 
     return () => {
-      if (socket.readyState === WebSocket.OPEN) socket.close();
+      intentionalClose = true;
+      clearTimeout(reconnectTimer);
+      if (socket && socket.readyState === WebSocket.OPEN) socket.close();
     };
   }, []);
 

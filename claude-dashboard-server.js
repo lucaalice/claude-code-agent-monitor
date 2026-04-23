@@ -7,18 +7,20 @@
  *   1. POST /api/event  — structured JSON from Claude Code hooks
  *   2. --demo           — simulated agent activity for testing the UI
  *
- * Broadcasts state to browsers via WebSocket on /ws
+ * State is persisted to SQLite (dashboard.db). Survives server restarts.
+ * Broadcasts state to browsers via WebSocket on /ws.
  */
 
 const http = require('http');
 const WebSocket = require('ws');
-const fs = require('fs');
+const Database = require('better-sqlite3');
 const path = require('path');
 
 const PORT = process.env.DASHBOARD_PORT || 3001;
 const DEMO = process.argv.includes('--demo');
+const DB_PATH = path.join(__dirname, 'dashboard.db');
 
-// ── Agent state store ──────────────────────────────────────────────
+// ── Agent team definition ──────────────────────────────────────────
 
 const agentTeam = [
   'team-lead',
@@ -40,92 +42,157 @@ const agentTeam = [
   'seo-visual',
 ];
 
-const agentState = {
-  teamLead: {
-    name: 'team-lead',
-    status: 'idle',
-    currentTask: null,
-    model: 'opus',
-    tokensUsed: 0,
-    startTime: null,
-    tasks: [],
-  },
-  specialists: {},
-  globalMetrics: {
-    totalTokens: 0,
-    totalCost: 0,
-    sessionStartTime: Date.now(),
-    activeAgents: 0,
-    completedTasks: 0,
-  },
-  taskQueue: [],
-};
+// ── SQLite persistence ─────────────────────────────────────────────
 
-agentTeam.forEach((name, i) => {
-  if (name !== 'team-lead') {
-    agentState.specialists[name] = {
-      name,
-      status: 'idle',
-      currentTask: null,
-      model: i < 9 ? 'sonnet' : 'inherited',
-      tokensUsed: 0,
-      startTime: null,
-      taskCount: 0,
-    };
-  }
-});
+const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
 
-// ── Helpers ────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS agents (
+    name        TEXT PRIMARY KEY,
+    status      TEXT NOT NULL DEFAULT 'idle',
+    currentTask TEXT,
+    model       TEXT NOT NULL DEFAULT 'sonnet',
+    tokensUsed  INTEGER NOT NULL DEFAULT 0,
+    startTime   INTEGER,
+    taskCount   INTEGER NOT NULL DEFAULT 0
+  );
 
-function recalcActiveAgents() {
-  agentState.globalMetrics.activeAgents =
-    Object.values(agentState.specialists).filter((a) => a.status === 'running').length +
-    (agentState.teamLead.status === 'running' ? 1 : 0);
+  CREATE TABLE IF NOT EXISTS metrics (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    totalTokens     INTEGER NOT NULL DEFAULT 0,
+    totalCost       REAL NOT NULL DEFAULT 0,
+    sessionStartTime INTEGER NOT NULL,
+    completedTasks  INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS task_queue (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    task      TEXT NOT NULL,
+    agent     TEXT,
+    timestamp INTEGER NOT NULL,
+    status    TEXT NOT NULL DEFAULT 'in_progress',
+    tokens    INTEGER DEFAULT 0
+  );
+`);
+
+// Seed agents if table is empty
+const agentCount = db.prepare('SELECT COUNT(*) as c FROM agents').get().c;
+if (agentCount === 0) {
+  const insert = db.prepare('INSERT OR IGNORE INTO agents (name, model) VALUES (?, ?)');
+  const tx = db.transaction(() => {
+    agentTeam.forEach((name, i) => {
+      const model = name === 'team-lead' ? 'opus' : (i < 10 ? 'sonnet' : 'inherited');
+      insert.run(name, model);
+    });
+  });
+  tx();
 }
 
-// ── Event handler (called from POST /api/event or demo) ──────────
+// Seed metrics if not exists
+const metricsExists = db.prepare('SELECT COUNT(*) as c FROM metrics').get().c;
+if (metricsExists === 0) {
+  db.prepare('INSERT INTO metrics (id, sessionStartTime) VALUES (1, ?)').run(Date.now());
+}
+
+// ── State helpers ──────────────────────────────────────────────────
+
+function loadState() {
+  const agents = db.prepare('SELECT * FROM agents').all();
+  const metrics = db.prepare('SELECT * FROM metrics WHERE id = 1').get();
+  const tasks = db.prepare('SELECT * FROM task_queue ORDER BY id DESC LIMIT 50').all().reverse();
+
+  const teamLead = agents.find((a) => a.name === 'team-lead') || {
+    name: 'team-lead', status: 'idle', currentTask: null, model: 'opus',
+    tokensUsed: 0, startTime: null, taskCount: 0,
+  };
+
+  const specialists = {};
+  agents.filter((a) => a.name !== 'team-lead').forEach((a) => {
+    specialists[a.name] = a;
+  });
+
+  const activeAgents = agents.filter((a) => a.status === 'running').length;
+
+  return {
+    teamLead,
+    specialists,
+    globalMetrics: {
+      totalTokens: metrics.totalTokens,
+      totalCost: metrics.totalCost,
+      sessionStartTime: metrics.sessionStartTime,
+      activeAgents,
+      completedTasks: metrics.completedTasks,
+    },
+    taskQueue: tasks,
+  };
+}
+
+// Prepared statements for hot path
+const stmts = {
+  setRunning: db.prepare(`
+    UPDATE agents SET status = 'running', startTime = ?, currentTask = COALESCE(?, currentTask)
+    WHERE name = ?
+  `),
+  setCompleted: db.prepare(`
+    UPDATE agents SET status = 'completed', currentTask = NULL, taskCount = taskCount + 1
+    WHERE name = ?
+  `),
+  setIdle: db.prepare(`
+    UPDATE agents SET status = 'idle', currentTask = NULL WHERE name = ?
+  `),
+  addTokens: db.prepare(`
+    UPDATE agents SET tokensUsed = tokensUsed + ? WHERE name = ?
+  `),
+  addGlobalTokens: db.prepare(`
+    UPDATE metrics SET totalTokens = totalTokens + ?,
+                       totalCost = (totalTokens + ?) * 3.0 / 1000000.0
+    WHERE id = 1
+  `),
+  incCompleted: db.prepare(`
+    UPDATE metrics SET completedTasks = completedTasks + 1 WHERE id = 1
+  `),
+  insertTask: db.prepare(`
+    INSERT INTO task_queue (task, agent, timestamp, status, tokens) VALUES (?, ?, ?, 'in_progress', ?)
+  `),
+  agentExists: db.prepare('SELECT 1 FROM agents WHERE name = ?'),
+  insertAgent: db.prepare('INSERT OR IGNORE INTO agents (name, model) VALUES (?, ?)'),
+  resetSession: db.prepare(`
+    UPDATE metrics SET totalTokens = 0, totalCost = 0, completedTasks = 0, sessionStartTime = ? WHERE id = 1
+  `),
+};
+
+// ── Event handler ──────────────────────────────────────────────────
 
 function handleEvent(evt) {
   const { type, agent, task, tokens } = evt;
 
+  // Auto-register unknown agents
+  if (agent && !stmts.agentExists.get(agent)) {
+    stmts.insertAgent.run(agent, 'sonnet');
+  }
+
   if (type === 'agent_start') {
-    if (agent === 'team-lead') {
-      agentState.teamLead.status = 'running';
-      agentState.teamLead.startTime = agentState.teamLead.startTime || Date.now();
-      if (task) agentState.teamLead.currentTask = task;
-    } else if (agentState.specialists[agent]) {
-      agentState.specialists[agent].status = 'running';
-      agentState.specialists[agent].startTime = Date.now();
-      if (task) agentState.specialists[agent].currentTask = task;
-    }
+    stmts.setRunning.run(Date.now(), task || null, agent);
     if (task) {
-      agentState.taskQueue.push({ task, agent, timestamp: Date.now(), status: 'in_progress' });
+      stmts.insertTask.run(task, agent, Date.now(), tokens || 0);
     }
   }
 
   if (type === 'agent_complete') {
-    if (agent === 'team-lead') {
-      agentState.teamLead.status = 'completed';
-      agentState.teamLead.currentTask = null;
-    } else if (agentState.specialists[agent]) {
-      agentState.specialists[agent].status = 'completed';
-      agentState.specialists[agent].currentTask = null;
-      agentState.specialists[agent].taskCount++;
-    }
-    agentState.globalMetrics.completedTasks++;
+    stmts.setCompleted.run(agent);
+    stmts.incCompleted.run();
   }
 
-  if (type === 'agent_idle' && agentState.specialists[agent]) {
-    agentState.specialists[agent].status = 'idle';
-    agentState.specialists[agent].currentTask = null;
+  if (type === 'agent_idle') {
+    stmts.setIdle.run(agent);
   }
 
-  if (tokens) {
-    agentState.globalMetrics.totalTokens += tokens;
-    agentState.globalMetrics.totalCost = (agentState.globalMetrics.totalTokens / 1_000_000) * 3;
+  if (tokens && tokens > 0) {
+    stmts.addTokens.run(tokens, agent);
+    stmts.addGlobalTokens.run(tokens, tokens);
   }
 
-  recalcActiveAgents();
   broadcastState();
 }
 
@@ -137,14 +204,29 @@ let clients = [];
 wsServer.on('connection', (ws) => {
   console.log('[WS] Client connected');
   clients.push(ws);
-  ws.send(JSON.stringify({ type: 'state_update', payload: agentState }));
+  ws.send(JSON.stringify({ type: 'state_update', payload: loadState() }));
+
+  // Ping/pong to keep connection alive
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   ws.on('close', () => {
     clients = clients.filter((c) => c !== ws);
   });
 });
 
+// Ping all clients every 30s to detect dead connections
+setInterval(() => {
+  clients.forEach((ws) => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30_000);
+
 function broadcastState() {
-  const msg = JSON.stringify({ type: 'state_update', payload: agentState, timestamp: Date.now() });
+  const state = loadState();
+  const msg = JSON.stringify({ type: 'state_update', payload: state, timestamp: Date.now() });
   clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
@@ -168,7 +250,7 @@ const server = http.createServer((req, res) => {
 
   if (req.url === '/api/state' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify(agentState));
+    return res.end(JSON.stringify(loadState()));
   }
 
   if (req.url === '/api/event' && req.method === 'POST') {
@@ -188,9 +270,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url === '/api/reset' && req.method === 'POST') {
+    // Reset all agents to idle and clear metrics
+    db.prepare("UPDATE agents SET status = 'idle', currentTask = NULL, tokensUsed = 0, startTime = NULL, taskCount = 0").run();
+    db.prepare('DELETE FROM task_queue').run();
+    stmts.resetSession.run(Date.now());
+    broadcastState();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, message: 'State reset' }));
+  }
+
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ status: 'ok', demo: DEMO, timestamp: Date.now() }));
+    return res.end(JSON.stringify({ status: 'ok', demo: DEMO, persisted: true, timestamp: Date.now() }));
   }
 
   res.writeHead(404);
@@ -211,7 +303,9 @@ server.listen(PORT, () => {
   console.log(`  WebSocket : ws://localhost:${PORT}/ws`);
   console.log(`  API state : http://localhost:${PORT}/api/state`);
   console.log(`  Post event: http://localhost:${PORT}/api/event`);
+  console.log(`  Reset     : POST http://localhost:${PORT}/api/reset`);
   console.log(`  Health    : http://localhost:${PORT}/health`);
+  console.log(`  Database  : ${DB_PATH}`);
   console.log(`  Mode      : ${DEMO ? 'DEMO (simulated agents)' : 'LIVE (waiting for hook events)'}\n`);
 });
 
@@ -240,9 +334,9 @@ if (DEMO) {
       console.log(`[DEMO] ${agent} started: ${task}`);
     }
 
-    // Complete a random running agent after a few have started
     if (step > 2) {
-      const running = Object.values(agentState.specialists).filter((a) => a.status === 'running');
+      const state = loadState();
+      const running = Object.values(state.specialists).filter((a) => a.status === 'running');
       if (running.length > 0) {
         const toComplete = running[Math.floor(Math.random() * running.length)];
         setTimeout(() => {
@@ -265,5 +359,6 @@ if (DEMO) {
 
 process.on('SIGINT', () => {
   console.log('\nShutting down...');
+  db.close();
   server.close(() => process.exit(0));
 });

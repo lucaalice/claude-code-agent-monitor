@@ -2,3 +2,6 @@ node_modules/
 .claude/
 dist/
 .DS_Store
+dashboard.db
+dashboard.db-wal
+dashboard.db-shm
