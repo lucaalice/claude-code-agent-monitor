@@ -574,11 +574,12 @@ function SpecialistCard({ agent, index, compact, now }) {
 
 // ─── Task queue ───────────────────────────────────────────────────────────────
 function TaskQueue({ tasks }) {
-  const slice = tasks.slice(-10).reverse();
+  const slice = tasks.slice(-25).reverse();
+  const statusColor = (s) => s === 'completed' ? T.blue : s === 'error' ? T.red : T.green;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {slice.map((task, i) => (
-        <div key={i} style={{
+        <div key={task.id || i} style={{
           display: 'grid', gridTemplateColumns: '48px 1fr', gap: 0,
           padding: '7px 14px',
           borderBottom: i < slice.length - 1 ? `1px solid ${T.border}` : 'none',
@@ -593,9 +594,11 @@ function TaskQueue({ tasks }) {
             </span>
           </div>
           <span style={{
-            fontFamily: T.sans, fontSize: 11, color: T.textSecond, lineHeight: 1.5,
+            fontFamily: T.sans, fontSize: 11,
+            color: task.status === 'completed' ? T.blue : task.status === 'error' ? T.red : T.textSecond,
+            lineHeight: 1.5,
             overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-            paddingLeft: 8, borderLeft: `2px solid ${T.border}`,
+            paddingLeft: 8, borderLeft: `2px solid ${statusColor(task.status)}`,
           }}>
             {task.task}
           </span>

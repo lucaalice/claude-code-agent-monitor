@@ -180,7 +180,15 @@ const stmts = {
     UPDATE metrics SET completedTasks = completedTasks + 1 WHERE id = 1
   `),
   insertTask: db.prepare(`
-    INSERT INTO task_queue (task, agent, timestamp, status, tokens) VALUES (?, ?, ?, 'in_progress', ?)
+    INSERT INTO task_queue (task, agent, timestamp, status, tokens) VALUES (?, ?, ?, ?, ?)
+  `),
+  completeLatestTask: db.prepare(`
+    UPDATE task_queue SET status = 'completed'
+    WHERE id = (SELECT MAX(id) FROM task_queue WHERE agent = ? AND status = 'in_progress')
+  `),
+  errorLatestTask: db.prepare(`
+    UPDATE task_queue SET status = 'error'
+    WHERE id = (SELECT MAX(id) FROM task_queue WHERE agent = ? AND status = 'in_progress')
   `),
   agentExists: db.prepare('SELECT 1 FROM agents WHERE name = ?'),
   insertAgent: db.prepare('INSERT OR IGNORE INTO agents (name, model) VALUES (?, ?)'),
@@ -223,13 +231,16 @@ function handleEvent(evt) {
   if (type === 'agent_start') {
     stmts.setRunning.run(Date.now(), task || null, agent);
     if (task) {
-      stmts.insertTask.run(task, agent, Date.now(), tokens || 0);
+      stmts.insertTask.run(task, agent, Date.now(), 'in_progress', tokens || 0);
     }
   }
 
   if (type === 'agent_complete') {
     stmts.setCompleted.run(agent);
     stmts.incCompleted.run();
+    stmts.completeLatestTask.run(agent);
+    // Log completion event in task queue
+    stmts.insertTask.run(`Completed: ${task || agent}`, agent, Date.now(), 'completed', tokens || 0);
   }
 
   if (type === 'agent_idle') {
@@ -239,9 +250,8 @@ function handleEvent(evt) {
   if (type === 'agent_error') {
     stmts.setError.run(agent);
     stmts.incCompleted.run();
-    if (task) {
-      stmts.insertTask.run(task, agent, Date.now(), tokens || 0);
-    }
+    stmts.errorLatestTask.run(agent);
+    stmts.insertTask.run(`Error: ${task || agent}`, agent, Date.now(), 'error', tokens || 0);
   }
 
   if (tokens && tokens > 0) {
