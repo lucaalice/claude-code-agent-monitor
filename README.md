@@ -1,14 +1,77 @@
-# Claude Code Agent Dashboard
+# Claude Code Agent Monitor
 
-A real-time browser dashboard that monitors a team of Claude Code sub-agents. The server receives lifecycle events from Claude Code hooks, maintains agent state in memory, and streams updates to connected browsers over WebSocket. A built-in demo mode simulates agent activity without requiring Claude Code to be running.
+Real-time dashboard for monitoring Claude Code subagent activity. Built with Node.js and React, it captures lifecycle events from [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks), maintains agent state in memory, and streams updates to connected browsers over WebSocket. Supports 17 agents, a built-in demo mode, and works with any Claude Code multi-agent setup.
+
+---
+
+## Features
+
+- **Real-time monitoring** -- WebSocket push on every agent state change, no polling required
+- **Claude Code hook integration** -- captures `PreToolUse` and `PostToolUse` events from the Agent tool automatically
+- **17-agent team overview** -- orchestrator card, specialist grid, and live task queue in a single view
+- **Metric strip** -- total tokens, estimated cost, active agent count, completed tasks, session uptime
+- **Demo mode** -- simulates agent activity without Claude Code running; useful for UI testing and demos
+- **REST API** -- `POST /api/event` to inject events, `GET /api/state` to snapshot the full state
+- **Zero external services** -- no database, no cloud dependency; state lives in server memory
+- **Minimal dependencies** -- server requires only `ws`; frontend uses React 19 and Vite 6
+
+---
+
+## Screenshots
 
 ### Dashboard overview (demo mode)
 
-![Dashboard — full view with active and idle agents](screenshots/dashboard-top.png)
+![Claude Code agent dashboard showing metric strip, team lead card, and specialist agent grid with live status indicators](screenshots/dashboard-top.png)
 
 ### Full agent grid with task queue
 
-![Dashboard — all 16 agents with task history](screenshots/dashboard-full.png)
+![Full view of all 17 Claude Code agents with task history panel and real-time status updates](screenshots/dashboard-full.png)
+
+---
+
+## Quick Start
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/yourusername/claude-code-agent-monitor.git
+cd claude-code-agent-monitor
+npm install
+cd frontend && npm install && cd ..
+```
+
+### 2. Start the server
+
+```bash
+# Live mode -- waits for hook events from Claude Code
+node claude-dashboard-server.js
+
+# Demo mode -- simulates agent activity (no hooks required)
+node claude-dashboard-server.js --demo
+```
+
+The server starts on port 3001. Output:
+
+```
+Claude Code Agent Dashboard Server
+-----------------------------------
+WebSocket : ws://localhost:3001/ws
+API state : http://localhost:3001/api/state
+Post event: http://localhost:3001/api/event
+Health    : http://localhost:3001/health
+Mode      : LIVE (waiting for hook events)
+```
+
+### 3. Start the frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open `http://localhost:5173` in a browser. The dashboard connects to the WebSocket automatically.
 
 ---
 
@@ -43,100 +106,6 @@ claude-dashboard-server.js  (Node.js, port 3001)
 
 ---
 
-## Prerequisites
-
-| Requirement | Version | Notes |
-|-------------|---------|-------|
-| Node.js | 18 or later | Both server and frontend build tooling |
-| npm | 9 or later | Bundled with Node.js 18 |
-| Claude Code | any recent | Required only for live hook events |
-| `jq` | any | Used inside the hook script to parse JSON |
-| `curl` | any | Used inside the hook script to POST events |
-
-The dashboard server has one npm dependency (`ws`). The frontend uses React 19 and Vite 8.
-
----
-
-## Quick Start
-
-### 1. Install server dependencies
-
-```bash
-cd ~/Desktop/ClaudexSEO/agent-dashboard
-npm install
-```
-
-### 2. Install frontend dependencies
-
-```bash
-cd ~/Desktop/ClaudexSEO/agent-dashboard/frontend
-npm install
-```
-
-### 3. Start the server
-
-```bash
-# Live mode — waits for hook events from Claude Code
-node claude-dashboard-server.js
-
-# Demo mode — simulates agent activity immediately (no hooks required)
-node claude-dashboard-server.js --demo
-```
-
-The server starts on port 3001 by default. You will see:
-
-```
-  Claude Code Agent Dashboard Server
-  -----------------------------------
-  WebSocket : ws://localhost:3001/ws
-  API state : http://localhost:3001/api/state
-  Post event: http://localhost:3001/api/event
-  Health    : http://localhost:3001/health
-  Mode      : LIVE (waiting for hook events)
-```
-
-### 4. Start the frontend
-
-In a second terminal:
-
-```bash
-cd ~/Desktop/ClaudexSEO/agent-dashboard/frontend
-npm run dev
-```
-
-Vite starts on `http://localhost:5173`. Open that URL in a browser. The dashboard connects to the WebSocket automatically and shows a boot screen until data arrives.
-
-### 5. Install the Claude Code hooks (live mode only)
-
-See [Hook Integration](#hook-integration) below.
-
----
-
-## File Structure
-
-```
-agent-dashboard/
-├── claude-dashboard-server.js    # Node.js HTTP + WebSocket server
-├── package.json                  # Server package (ws dependency)
-├── package-lock.json
-└── frontend/
-    ├── package.json              # Frontend package (React 19, Vite 8)
-    ├── src/
-    │   ├── main.jsx              # React entry point
-    │   ├── App.jsx               # Root component (wraps ClaudeCodeDashboard)
-    │   ├── ClaudeCodeDashboard.jsx  # Full dashboard UI — all components in one file
-    │   ├── App.css
-    │   └── index.css
-    └── assets/
-
-~/.claude/
-├── settings.json                 # Claude Code hooks configuration
-└── hooks/
-    └── dashboard-agent-event.sh  # Hook script — reads stdin, POSTs to /api/event
-```
-
----
-
 ## API Reference
 
 ### HTTP Endpoints
@@ -144,13 +113,13 @@ agent-dashboard/
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/state` | Returns the full `agentState` object as JSON |
-| `POST` | `/api/event` | Accepts an event object; updates state and broadcasts to all WebSocket clients |
+| `POST` | `/api/event` | Accepts an event object; updates state and broadcasts via WebSocket |
 | `GET` | `/health` | Returns `{"status":"ok","demo":<bool>,"timestamp":<ms>}` |
-| `OPTIONS` | `*` | CORS preflight — all origins permitted |
+| `OPTIONS` | `*` | CORS preflight -- all origins permitted |
 
 All responses include `Access-Control-Allow-Origin: *`.
 
-#### POST /api/event
+### POST /api/event
 
 Request body (JSON):
 
@@ -165,114 +134,49 @@ Request body (JSON):
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | yes | Event type — see values below |
-| `agent` | string | yes | Agent name, must match a name in the agent team list |
-| `task` | string | no | Human-readable description of the current task |
+| `type` | string | yes | One of `agent_start`, `agent_complete`, `agent_idle` |
+| `agent` | string | yes | Must match a name in the agent team list |
+| `task` | string | no | Human-readable task description |
 | `tokens` | number | no | Token count to add to global totals |
 
-**Event types:**
+Event type effects:
 
-| `type` | Effect |
-|--------|--------|
-| `agent_start` | Sets agent status to `running`, records `startTime`, appends task to queue |
-| `agent_complete` | Sets agent status to `completed`, increments `taskCount` and `completedTasks` |
-| `agent_idle` | Sets agent status to `idle`, clears `currentTask` |
-
-Response on success:
-
-```json
-{"ok": true}
-```
-
-Response on invalid JSON:
-
-```json
-{"error": "Invalid JSON"}
-```
-HTTP status 400.
+| Type | Effect |
+|------|--------|
+| `agent_start` | Sets status to `running`, records `startTime`, appends task to queue |
+| `agent_complete` | Sets status to `completed`, increments `taskCount` and `completedTasks` |
+| `agent_idle` | Sets status to `idle`, clears `currentTask` |
 
 ### WebSocket
 
-Connect to `ws://localhost:3001/ws`.
-
-On connection, the server immediately sends the current full state:
-
-```json
-{
-  "type": "state_update",
-  "payload": { ...agentState }
-}
-```
-
-After every `POST /api/event`, the server broadcasts the same message shape to all connected clients:
+Connect to `ws://localhost:3001/ws`. On connection, the server sends the current full state. After every `POST /api/event`, it broadcasts to all clients:
 
 ```json
 {
   "type":      "state_update",
-  "payload":   { ...agentState },
+  "payload":   { "teamLead": {}, "specialists": {}, "globalMetrics": {}, "taskQueue": [] },
   "timestamp": 1714000000000
 }
 ```
 
-The `payload` structure:
-
-```json
-{
-  "teamLead": {
-    "name":        "team-lead",
-    "status":      "idle | running | completed",
-    "currentTask": null,
-    "model":       "opus",
-    "tokensUsed":  0,
-    "startTime":   null,
-    "tasks":       []
-  },
-  "specialists": {
-    "<agent-name>": {
-      "name":        "<agent-name>",
-      "status":      "idle | running | completed",
-      "currentTask": null,
-      "model":       "sonnet | inherited",
-      "tokensUsed":  0,
-      "startTime":   null,
-      "taskCount":   0
-    }
-  },
-  "globalMetrics": {
-    "totalTokens":       0,
-    "totalCost":         0.0,
-    "sessionStartTime":  1714000000000,
-    "activeAgents":      0,
-    "completedTasks":    0
-  },
-  "taskQueue": [
-    {
-      "task":      "description",
-      "agent":     "agent-name",
-      "timestamp": 1714000000000,
-      "status":    "in_progress"
-    }
-  ]
-}
-```
-
-Cost is estimated at `$3.00 per 1M tokens` (applied to `totalTokens`).
+Cost is estimated at $3.00 per 1M tokens.
 
 ---
 
 ## Hook Integration
 
+Claude Code hooks allow external scripts to run on specific lifecycle events. This dashboard uses `PreToolUse` and `PostToolUse` hooks on the `Agent` tool to capture subagent start and completion events.
+
 ### How it works
 
-Claude Code fires `PreToolUse` and `PostToolUse` hook events whenever the `Agent` tool is invoked. The hook script `/Users/lucaalice/.claude/hooks/dashboard-agent-event.sh` reads the JSON payload from stdin, extracts `tool_input.subagent_type` and `tool_input.description`, maps the hook event name to a dashboard event type, and POSTs to `/api/event`.
+1. Claude Code invokes the `Agent` tool to delegate work to a subagent
+2. The `PreToolUse` hook fires, the script reads `tool_input.subagent_type` and `tool_input.description` from stdin
+3. The script POSTs an `agent_start` event to `/api/event`
+4. When the subagent finishes, `PostToolUse` fires and the script POSTs `agent_complete`
 
-Both `curl` calls use `--connect-timeout 1 --max-time 2` and run in the background (`&`), so a missing or slow dashboard server never blocks Claude Code.
+Both `curl` calls use `--connect-timeout 1 --max-time 2` and run in the background, so a missing or slow dashboard server never blocks Claude Code.
 
-When any sub-agent starts, the script also fires an additional `agent_start` event for `team-lead` to mark the orchestrator as active.
-
-### Hook payload received by the script (stdin)
-
-Claude Code writes JSON to the hook's stdin. The fields the script reads:
+### Hook payload (stdin)
 
 | Field | Used as |
 |-------|---------|
@@ -282,13 +186,11 @@ Claude Code writes JSON to the hook's stdin. The fields the script reads:
 
 ### Installing the hooks
 
-The hooks are already configured in `~/.claude/settings.json`. If you need to set them up from scratch:
-
 **1. Create the hook script**
 
 ```bash
 mkdir -p ~/.claude/hooks
-cp /path/to/dashboard-agent-event.sh ~/.claude/hooks/
+cp dashboard-agent-event.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/dashboard-agent-event.sh
 ```
 
@@ -303,7 +205,7 @@ chmod +x ~/.claude/hooks/dashboard-agent-event.sh
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/lucaalice/.claude/hooks/dashboard-agent-event.sh"
+            "command": "/absolute/path/to/.claude/hooks/dashboard-agent-event.sh"
           }
         ]
       }
@@ -314,7 +216,7 @@ chmod +x ~/.claude/hooks/dashboard-agent-event.sh
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/lucaalice/.claude/hooks/dashboard-agent-event.sh"
+            "command": "/absolute/path/to/.claude/hooks/dashboard-agent-event.sh"
           }
         ]
       }
@@ -323,11 +225,9 @@ chmod +x ~/.claude/hooks/dashboard-agent-event.sh
 }
 ```
 
-Replace the path with the absolute path to your hook script. Relative paths are not supported.
+Replace the path with the absolute path to your hook script. Relative paths are not supported by Claude Code.
 
-### Testing the hook manually
-
-With the server running, send a test event directly:
+### Testing manually
 
 ```bash
 curl -s -X POST http://localhost:3001/api/event \
@@ -347,9 +247,7 @@ The server reads `DASHBOARD_PORT` from the environment. Default is `3001`.
 DASHBOARD_PORT=4000 node claude-dashboard-server.js
 ```
 
-If you change the port, update the WebSocket URL hardcoded in the frontend:
-
-`frontend/src/ClaudeCodeDashboard.jsx`, line with `localhost:3001/ws` (two occurrences — the `useEffect` hook and the status bar footer).
+If you change the port, update the WebSocket URL in `frontend/src/ClaudeCodeDashboard.jsx` (two occurrences of `localhost:3001/ws`).
 
 ### Demo mode
 
@@ -357,48 +255,70 @@ If you change the port, update the WebSocket URL hardcoded in the frontend:
 node claude-dashboard-server.js --demo
 ```
 
-Demo mode fires a sequence of 10 pre-defined tasks at 2–4 second intervals, randomly completing running agents as new ones start. It is useful for testing the UI without Claude Code or live hooks. Demo state is not persisted — restarting the server resets everything.
+Fires 10 pre-defined tasks at 2-4 second intervals, randomly completing agents as new ones start. State is not persisted -- restarting the server resets everything.
 
 ### Adding or renaming agents
 
-The agent roster is defined at the top of `claude-dashboard-server.js`:
+Edit the `agentTeam` array at the top of `claude-dashboard-server.js`:
 
 ```js
 const agentTeam = [
   'team-lead',
   'scraper-debugger',
-  'data-pipeline-qa',
-  // ... add entries here
+  // ... add or remove entries here
 ];
 ```
 
 Rules:
-- The first entry (`team-lead`) is treated as the orchestrator and rendered in the `TeamLeadCard` component. All other entries are specialists.
-- The `model` field is set to `'sonnet'` for entries at index 1–8 and `'inherited'` for index 9 and beyond. Adjust the condition in the `forEach` loop if needed.
-- Agent names sent via `POST /api/event` must exactly match entries in this array or they will be silently ignored.
+- The first entry (`team-lead`) is the orchestrator, rendered in `TeamLeadCard`. All others are specialists.
+- Model is set to `sonnet` for indices 1-8 and `inherited` for 9+. Adjust the condition in the `forEach` loop if needed.
+- Agent names in `POST /api/event` must exactly match entries in this array or they are silently ignored.
 
 ---
 
-## Agents and Roles
+## Agent Team
 
-| # | Agent name | Role |
-|---|-----------|------|
-| — | `team-lead` | Orchestrator — delegates tasks to specialists, runs on Opus |
+| # | Agent | Role |
+|---|-------|------|
+| -- | `team-lead` | Orchestrator -- delegates tasks to specialists, runs on Opus |
 | 01 | `scraper-debugger` | Diagnoses and fixes broken web scrapers and CSS selectors |
 | 02 | `data-pipeline-qa` | Validates data extraction, transformation, and pipeline integrity |
 | 03 | `devops-monitor` | Monitors infrastructure, logs, and deployment health |
-| 04 | `google-api-debugger` | Debugs Google API integrations (Search Console, Analytics, etc.) |
+| 04 | `google-api-debugger` | Debugs Google API integrations (Search Console, Analytics) |
 | 05 | `code-reviewer` | Reviews PRs for correctness, security, and style |
 | 06 | `ui-ux-designer` | Produces UI specifications and component designs |
 | 07 | `frontend-developer` | Implements React/JS components and frontend features |
 | 08 | `documentation-expert` | Writes and maintains technical documentation |
-| 09 | `seo-technical` | Crawlability, indexability, robots.txt, canonical tags |
-| 10 | `seo-content` | E-E-A-T signals, content quality, keyword alignment |
-| 11 | `seo-schema` | JSON-LD structured data, schema validation |
-| 12 | `seo-sitemap` | XML sitemap generation and submission |
-| 13 | `seo-geo` | Hreflang, geo-targeting, international SEO |
-| 14 | `seo-performance` | Core Web Vitals, page speed, rendering performance |
-| 15 | `seo-visual` | Image optimisation, alt text, visual search signals |
+| 09 | `seo-manager` | Coordinates SEO specialists and prioritizes SEO tasks |
+| 10 | `seo-technical` | Crawlability, indexability, robots.txt, canonical tags |
+| 11 | `seo-content` | E-E-A-T signals, content quality, keyword alignment |
+| 12 | `seo-schema` | JSON-LD structured data and schema validation |
+| 13 | `seo-sitemap` | XML sitemap generation and submission |
+| 14 | `seo-geo` | Hreflang, geo-targeting, international SEO |
+| 15 | `seo-performance` | Core Web Vitals, page speed, rendering performance |
+| 16 | `seo-visual` | Image optimization, alt text, visual search signals |
+
+---
+
+## File Structure
+
+```
+claude-code-agent-monitor/
+├── claude-dashboard-server.js    # Node.js HTTP + WebSocket server
+├── package.json                  # Server dependencies (ws)
+├── dashboard-agent-event.sh      # Hook script for Claude Code
+├── screenshots/
+│   ├── dashboard-top.png
+│   └── dashboard-full.png
+└── frontend/
+    ├── package.json              # React 19, Vite 6
+    └── src/
+        ├── main.jsx
+        ├── App.jsx
+        ├── ClaudeCodeDashboard.jsx  # Full dashboard UI
+        ├── App.css
+        └── index.css
+```
 
 ---
 
@@ -406,27 +326,16 @@ Rules:
 
 ### Dashboard shows "Connecting to ws://localhost:3001..."
 
-The browser cannot reach the server. Check:
+The browser cannot reach the server.
 
 ```bash
-# Verify the server is running
 curl http://localhost:3001/health
-
-# Check what is listening on port 3001
 lsof -i :3001
 ```
 
-If the server is running on a different port, set `DASHBOARD_PORT` and update the hardcoded WebSocket URL in `ClaudeCodeDashboard.jsx`.
+### "Waiting for data..." with server running
 
-### Browser shows "Waiting for data..." but server is running
-
-The WebSocket connection succeeded but no events have arrived yet. In live mode this is expected until Claude Code invokes an agent. Use demo mode to verify the UI is working:
-
-```bash
-node claude-dashboard-server.js --demo
-```
-
-Or send a manual event:
+WebSocket connected but no events received. Expected in live mode until Claude Code invokes an agent. Use `--demo` or send a manual event:
 
 ```bash
 curl -s -X POST http://localhost:3001/api/event \
@@ -434,43 +343,67 @@ curl -s -X POST http://localhost:3001/api/event \
   -d '{"type":"agent_start","agent":"team-lead","task":"Test task"}'
 ```
 
-### Hook events are not appearing on the dashboard
+### Hook events not appearing
 
-1. Confirm the server is running before starting Claude Code.
-2. Confirm `jq` is installed: `which jq`
-3. Confirm `curl` is installed: `which curl`
-4. Test the hook script manually by piping sample input:
+1. Confirm the server is running before starting Claude Code
+2. Verify `jq` and `curl` are installed: `which jq curl`
+3. Test the hook script directly:
 
 ```bash
 echo '{"hook_event_name":"PreToolUse","tool_input":{"subagent_type":"seo-technical","description":"Test"}}' \
   | bash ~/.claude/hooks/dashboard-agent-event.sh
 ```
 
-5. Check that the hook script is executable: `ls -la ~/.claude/hooks/dashboard-agent-event.sh`
-6. Verify the path in `~/.claude/settings.json` matches the actual script location exactly (absolute path required).
+4. Check the script is executable: `chmod +x ~/.claude/hooks/dashboard-agent-event.sh`
+5. Verify the absolute path in `~/.claude/settings.json` matches the script location
 
-### Agent events are silently dropped
+### Agent events silently dropped
 
-The agent name in the event payload must match exactly one of the 16 names in `agentTeam` in `claude-dashboard-server.js`. The value comes from `tool_input.subagent_type` in the Agent tool call. If your agents use different `subagent_type` values, either update the hook script to remap them or add the new names to `agentTeam`.
+The `agent` field must exactly match one of the 17 names in `agentTeam` in `claude-dashboard-server.js`. If your agents use different `subagent_type` values, update the hook script or add new names to `agentTeam`.
 
-### State does not reset between Claude Code sessions
-
-The server holds state in memory for the duration of its process. Restart the server to reset all agent state, token counts, and the task queue:
+### Port 3001 already in use
 
 ```bash
-# Ctrl-C or:
+lsof -i :3001
+DASHBOARD_PORT=3002 node claude-dashboard-server.js
+```
+
+Then update the WebSocket URL in `ClaudeCodeDashboard.jsx`.
+
+### Resetting state
+
+State lives in server memory. Restart the server to reset:
+
+```bash
 kill $(lsof -ti :3001)
 node claude-dashboard-server.js
 ```
 
-### Port 3001 is already in use
+---
 
-```bash
-# Find the process
-lsof -i :3001
+## Prerequisites
 
-# Kill it or start the server on a different port
-DASHBOARD_PORT=3002 node claude-dashboard-server.js
-```
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| Node.js | 18+ | Server and frontend build tooling |
+| npm | 9+ | Bundled with Node.js 18 |
+| Claude Code | any | Required only for live hook events |
+| `jq` | any | Used by the hook script to parse JSON |
+| `curl` | any | Used by the hook script to POST events |
 
-Then update the WebSocket URL in `ClaudeCodeDashboard.jsx` to match.
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Make your changes and test with `--demo` mode
+4. Submit a pull request with a clear description of the change
+
+Bug reports and feature requests are welcome via GitHub Issues.
+
+---
+
+## License
+
+MIT
