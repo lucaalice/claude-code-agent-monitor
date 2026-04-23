@@ -1,6 +1,6 @@
 # Claude Code Agent Monitor
 
-Real-time dashboard for monitoring Claude Code subagent activity. Built with Node.js and React, it captures lifecycle events from [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks), maintains agent state in memory, and streams updates to connected browsers over WebSocket. Supports 17 agents, a built-in demo mode, and works with any Claude Code multi-agent setup.
+Real-time dashboard for monitoring Claude Code subagent activity. Built with Node.js and React, it captures lifecycle events from [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks), persists state to SQLite, and streams updates to connected browsers over WebSocket. Supports 17 agents with hierarchical visualization, a built-in demo mode, and works with any Claude Code multi-agent setup.
 
 ---
 
@@ -8,12 +8,14 @@ Real-time dashboard for monitoring Claude Code subagent activity. Built with Nod
 
 - **Real-time monitoring** -- WebSocket push on every agent state change, no polling required
 - **Claude Code hook integration** -- captures `PreToolUse` and `PostToolUse` events from the Agent tool automatically
-- **17-agent team overview** -- orchestrator card, specialist grid, and live task queue in a single view
+- **Hierarchical agent view** -- team-lead orchestrator at top, direct reports in one group, seo-manager sub-orchestrator with 7 SEO specialists nested underneath
+- **SQLite persistence** -- agent state, metrics, and task history survive server restarts
+- **Token and cost tracking** -- extracts usage data from hook responses, tracks per-agent and global totals
+- **Auto-reconnect** -- frontend reconnects with exponential backoff (1s-15s) if the server restarts
 - **Metric strip** -- total tokens, estimated cost, active agent count, completed tasks, session uptime
 - **Demo mode** -- simulates agent activity without Claude Code running; useful for UI testing and demos
-- **REST API** -- `POST /api/event` to inject events, `GET /api/state` to snapshot the full state
-- **Zero external services** -- no database, no cloud dependency; state lives in server memory
-- **Minimal dependencies** -- server requires only `ws`; frontend uses React 19 and Vite 6
+- **REST API** -- `POST /api/event` to inject events, `GET /api/state` to snapshot, `POST /api/reset` to clear state
+- **Minimal dependencies** -- server requires `ws` and `better-sqlite3`; frontend uses React 19 and Vite
 
 ---
 
@@ -278,9 +280,32 @@ Rules:
 
 ## Agent Team
 
+The dashboard visualizes a two-level hierarchy: **team-lead** orchestrates all agents, while **seo-manager** acts as a sub-orchestrator for the 7 SEO specialists.
+
+```
+team-lead (Opus)
+├── scraper-debugger
+├── data-pipeline-qa
+├── devops-monitor
+├── google-api-debugger
+├── code-reviewer
+├── ui-ux-designer
+├── frontend-developer
+├── documentation-expert
+└── seo-manager (sub-orchestrator)
+    ├── seo-technical
+    ├── seo-content
+    ├── seo-schema
+    ├── seo-sitemap
+    ├── seo-geo
+    ├── seo-performance
+    └── seo-visual
+```
+
+### Direct Reports
+
 | # | Agent | Role |
 |---|-------|------|
-| -- | `team-lead` | Orchestrator -- delegates tasks to specialists, runs on Opus |
 | 01 | `scraper-debugger` | Diagnoses and fixes broken web scrapers and CSS selectors |
 | 02 | `data-pipeline-qa` | Validates data extraction, transformation, and pipeline integrity |
 | 03 | `devops-monitor` | Monitors infrastructure, logs, and deployment health |
@@ -289,14 +314,19 @@ Rules:
 | 06 | `ui-ux-designer` | Produces UI specifications and component designs |
 | 07 | `frontend-developer` | Implements React/JS components and frontend features |
 | 08 | `documentation-expert` | Writes and maintains technical documentation |
-| 09 | `seo-manager` | Coordinates SEO specialists and prioritizes SEO tasks |
-| 10 | `seo-technical` | Crawlability, indexability, robots.txt, canonical tags |
-| 11 | `seo-content` | E-E-A-T signals, content quality, keyword alignment |
-| 12 | `seo-schema` | JSON-LD structured data and schema validation |
-| 13 | `seo-sitemap` | XML sitemap generation and submission |
-| 14 | `seo-geo` | Hreflang, geo-targeting, international SEO |
-| 15 | `seo-performance` | Core Web Vitals, page speed, rendering performance |
-| 16 | `seo-visual` | Image optimization, alt text, visual search signals |
+
+### SEO Team (managed by seo-manager)
+
+| # | Agent | Role |
+|---|-------|------|
+| -- | `seo-manager` | Sub-orchestrator -- coordinates SEO specialists and prioritizes SEO tasks |
+| 09 | `seo-technical` | Crawlability, indexability, robots.txt, canonical tags |
+| 10 | `seo-content` | E-E-A-T signals, content quality, keyword alignment |
+| 11 | `seo-schema` | JSON-LD structured data and schema validation |
+| 12 | `seo-sitemap` | XML sitemap generation and submission |
+| 13 | `seo-geo` | Hreflang, geo-targeting, international SEO |
+| 14 | `seo-performance` | Core Web Vitals, page speed, rendering performance |
+| 15 | `seo-visual` | Image optimization, alt text, visual search signals |
 
 ---
 

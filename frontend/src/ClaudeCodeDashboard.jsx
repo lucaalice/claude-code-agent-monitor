@@ -425,8 +425,104 @@ function TeamLeadCard({ agent, elapsedTime }) {
   );
 }
 
+// ─── Sub-orchestrator card (seo-manager) ────────────────────────────────────
+function SubOrchestratorCard({ agent, childCount }) {
+  const isRunning = agent.status === 'running';
+  const m = getStatus(agent.status);
+
+  return (
+    <div style={{
+      margin:          '10px 14px 4px',
+      borderRadius:    8,
+      border:          `1px solid ${isRunning ? T.green + '35' : T.border}`,
+      backgroundColor: T.bgSurfaceHi,
+      overflow:        'hidden',
+      animation:       isRunning ? 'breatheGreen 3s ease-in-out infinite' : 'none',
+      transition:      'border-color 0.3s ease',
+    }}>
+      <div style={{
+        display:         'flex',
+        alignItems:      'center',
+        justifyContent:  'space-between',
+        padding:         '7px 12px',
+        backgroundColor: isRunning ? 'rgba(52,211,153,0.04)' : 'transparent',
+        borderBottom:    `1px solid ${T.border}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Tree connector icon */}
+          <span style={{
+            fontFamily: T.mono,
+            fontSize:   11,
+            color:      isRunning ? T.green : T.textDim,
+          }}>
+            &#9507;
+          </span>
+          <span style={{
+            fontFamily:  T.mono,
+            fontSize:    12,
+            fontWeight:  700,
+            color:       isRunning ? T.green : T.textPrimary,
+            letterSpacing: 0.3,
+          }}>
+            seo-manager
+          </span>
+          <span style={{
+            fontFamily:      T.mono,
+            fontSize:        10,
+            color:           T.textMuted,
+            backgroundColor: T.bgOverlay,
+            border:          `1px solid ${T.border}`,
+            padding:         '1px 7px',
+            borderRadius:    4,
+          }}>
+            opus
+          </span>
+          <span style={{
+            fontFamily: T.sans,
+            fontSize:   10,
+            color:      T.textMuted,
+          }}>
+            {childCount} specialists
+          </span>
+        </div>
+        <StatusBadge status={agent.status} />
+      </div>
+
+      {agent.currentTask ? (
+        <div style={{ padding: '8px 12px' }}>
+          <span style={{
+            fontFamily:  T.sans,
+            fontSize:    9,
+            color:       T.textMuted,
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+          }}>
+            Current task
+          </span>
+          <p style={{
+            margin:     '3px 0 0',
+            fontFamily: T.mono,
+            fontSize:   11,
+            color:      T.textSecond,
+            lineHeight: 1.5,
+          }}>
+            {agent.currentTask}
+          </p>
+          <ActivityBar active={isRunning} />
+        </div>
+      ) : (
+        <div style={{ padding: '8px 12px' }}>
+          <span style={{ fontFamily: T.sans, fontSize: 11, color: T.textDim, fontStyle: 'italic' }}>
+            No active task
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Specialist card (grid item) ─────────────────────────────────────────────
-function SpecialistCard({ agent, index }) {
+function SpecialistCard({ agent, index, compact }) {
   const isRunning = agent.status === 'running';
   const isWaiting = agent.status === 'waiting';
   const m = getStatus(agent.status);
@@ -748,11 +844,20 @@ export default function ClaudeCodeDashboard() {
 
   const sessionAge = formatTime(now - agentState.globalMetrics.sessionStartTime);
 
-  // Sort: running > waiting > completed > idle
-  const sortedSpecialists = [...specialists].sort((a, b) => {
+  // Sort helper: running > waiting > completed > idle
+  const statusSort = (a, b) => {
     const order = { running: 0, waiting: 1, completed: 2, idle: 3 };
     return (order[a.status] ?? 4) - (order[b.status] ?? 4);
-  });
+  };
+
+  // Split agents into hierarchy
+  const seoSpecialistNames = ['seo-technical', 'seo-content', 'seo-schema', 'seo-sitemap', 'seo-geo', 'seo-performance', 'seo-visual'];
+  const seoManager    = specialists.find((a) => a.name === 'seo-manager') || null;
+  const seoAgents     = specialists.filter((a) => seoSpecialistNames.includes(a.name));
+  const directReports = specialists.filter((a) => a.name !== 'seo-manager' && !seoSpecialistNames.includes(a.name));
+
+  const sortedDirectReports = [...directReports].sort(statusSort);
+  const sortedSeoAgents     = [...seoAgents].sort(statusSort);
 
   return (
     <div style={{
@@ -879,22 +984,48 @@ export default function ClaudeCodeDashboard() {
             <TeamLeadCard agent={agentState.teamLead} elapsedTime={elapsedTime} />
           </div>
 
-          {/* Specialists section */}
+          {/* Direct reports section */}
+          <div style={{ borderBottom: `1px solid ${T.border}` }}>
+            <SectionHeader
+              label="Direct Reports"
+              right={`${directReports.filter(a => a.status === 'running').length} running · ${directReports.length} agents`}
+            />
+            <div style={{
+              display:             'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap:                 10,
+              padding:             '12px 14px',
+            }}>
+              {sortedDirectReports.map((agent, i) => (
+                <SpecialistCard key={agent.name} agent={agent} index={i} />
+              ))}
+            </div>
+          </div>
+
+          {/* SEO Team section — nested under seo-manager */}
           <div style={{ flex: 1 }}>
             <SectionHeader
-              label="Specialists"
-              right={`${runningCount} running · ${waitingCount} waiting · ${specialists.length} total`}
+              label="SEO Team"
+              right={`${seoAgents.filter(a => a.status === 'running').length} running · ${seoAgents.length + 1} agents`}
             />
 
-            {/* Card grid — 2 cols on wide, 1 on narrow */}
+            {/* seo-manager sub-orchestrator card */}
+            {seoManager && (
+              <SubOrchestratorCard agent={seoManager} childCount={seoAgents.length} />
+            )}
+
+            {/* SEO specialists grid — indented under seo-manager */}
             <div style={{
-              display:               'grid',
-              gridTemplateColumns:   'repeat(auto-fill, minmax(280px, 1fr))',
-              gap:                   10,
-              padding:               '12px 14px',
+              display:             'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+              gap:                 10,
+              padding:             '8px 14px 12px 28px',
+              marginLeft:          14,
+              borderLeft:          `2px solid ${seoManager && seoManager.status === 'running' ? T.green + '40' : T.border}`,
+              transition:          'border-color 0.3s ease',
             }}>
-              {sortedSpecialists.map((agent, i) => (
-                <SpecialistCard key={agent.name} agent={agent} index={i} />
+              {sortedSeoAgents.map((agent, i) => (
+                <SpecialistCard key={agent.name} agent={agent} index={i} compact />
               ))}
             </div>
           </div>
