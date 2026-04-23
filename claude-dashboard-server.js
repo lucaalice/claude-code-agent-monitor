@@ -172,9 +172,10 @@ const stmts = {
     UPDATE agents SET tokensUsed = tokensUsed + ? WHERE name = ?
   `),
   addGlobalTokens: db.prepare(`
-    UPDATE metrics SET totalTokens = totalTokens + ?,
-                       totalCost = (totalTokens + ?) * 3.0 / 1000000.0
-    WHERE id = 1
+    UPDATE metrics SET totalTokens = totalTokens + ? WHERE id = 1
+  `),
+  updateCost: db.prepare(`
+    UPDATE metrics SET totalCost = totalTokens * 3.0 / 1000000.0 WHERE id = 1
   `),
   incCompleted: db.prepare(`
     UPDATE metrics SET completedTasks = completedTasks + 1 WHERE id = 1
@@ -249,14 +250,14 @@ function handleEvent(evt) {
 
   if (type === 'agent_error') {
     stmts.setError.run(agent);
-    stmts.incCompleted.run();
     stmts.errorLatestTask.run(agent);
     stmts.insertTask.run(`Error: ${task || agent}`, agent, Date.now(), 'error', tokens || 0);
   }
 
   if (tokens && tokens > 0) {
     stmts.addTokens.run(tokens, agent);
-    stmts.addGlobalTokens.run(tokens, tokens);
+    stmts.addGlobalTokens.run(tokens);
+    stmts.updateCost.run();
   }
 
   // Store agent output log if provided
@@ -289,10 +290,11 @@ wsServer.on('connection', (ws) => {
 
 // Ping all clients every 30s to detect dead connections
 setInterval(() => {
-  clients.forEach((ws) => {
-    if (!ws.isAlive) return ws.terminate();
+  clients = clients.filter((ws) => {
+    if (!ws.isAlive) { ws.terminate(); return false; }
     ws.isAlive = false;
     ws.ping();
+    return true;
   });
 }, 30_000);
 
@@ -327,7 +329,10 @@ const server = http.createServer((req, res) => {
 
   if (req.url === '/api/event' && req.method === 'POST') {
     let body = '';
-    req.on('data', (chunk) => (body += chunk));
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 65536) { res.writeHead(413); res.end(); req.destroy(); return; }
+    });
     req.on('end', () => {
       try {
         const evt = JSON.parse(body);
@@ -379,12 +384,12 @@ const server = http.createServer((req, res) => {
   if (sessionMatch && req.method === 'GET') {
     const row = stmts.getSession.get(parseInt(sessionMatch[1]));
     if (!row) { res.writeHead(404); return res.end('Not Found'); }
-    row.agentSnapshot = JSON.parse(row.agentSnapshot);
+    try { row.agentSnapshot = JSON.parse(row.agentSnapshot); } catch { row.agentSnapshot = []; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(row));
   }
 
-  const logsMatch = req.url.match(/^\/api\/logs\/([a-z0-9-]+)$/);
+  const logsMatch = req.url.match(/^\/api\/logs\/([a-z0-9_-]+)$/);
   if (logsMatch && req.method === 'GET') {
     const logs = stmts.agentLogs.all(logsMatch[1]);
     res.writeHead(200, { 'Content-Type': 'application/json' });

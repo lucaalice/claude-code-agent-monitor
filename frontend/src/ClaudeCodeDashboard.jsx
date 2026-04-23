@@ -46,7 +46,7 @@ styleSheet.textContent = `
     * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
 `;
-if (!document.head.querySelector('[data-ccd-styles]')) {
+if (typeof document !== 'undefined' && !document.head.querySelector('[data-ccd-styles]')) {
   styleSheet.setAttribute('data-ccd-styles', '1');
   document.head.appendChild(styleSheet);
 }
@@ -82,8 +82,9 @@ const T = {
 };
 
 // ─── Utility formatters ───────────────────────────────────────────────────────
-const formatCost   = (c) => `$${c.toFixed(4)}`;
+const formatCost   = (c) => c == null ? '$0.0000' : `$${Number(c).toFixed(4)}`;
 const formatTokens = (t) => {
+  if (t == null || isNaN(t)) return '0';
   if (t > 1_000_000) return (t / 1_000_000).toFixed(2) + 'M';
   if (t > 1_000)     return (t / 1_000).toFixed(1) + 'K';
   return t.toString();
@@ -431,7 +432,7 @@ function SubOrchestratorCard({ agent, childCount }) {
             backgroundColor: T.bgOverlay, border: `1px solid ${T.border}`,
             padding: '1px 7px', borderRadius: 4,
           }}>
-            opus
+            {agent.model}
           </span>
           <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textMuted }}>
             {childCount} specialists
@@ -703,7 +704,7 @@ export default function ClaudeCodeDashboard() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [sessions, setSessions]         = useState([]);
   const [showSessions, setShowSessions] = useState(false);
-  const [notifMuted, setNotifMuted]     = useState(() => localStorage.getItem('dashboard-notif-muted') === 'true');
+  const [notifMuted, setNotifMuted]     = useState(() => { try { return localStorage.getItem('dashboard-notif-muted') === 'true'; } catch { return false; } });
   const prevStateRef = useRef(null);
 
   // Live clock
@@ -807,7 +808,7 @@ export default function ClaudeCodeDashboard() {
     return () => {
       intentionalClose = true;
       clearTimeout(reconnectTimer);
-      if (socket && socket.readyState === WebSocket.OPEN) socket.close();
+      if (socket) socket.close();
     };
   }, []);
 
@@ -1028,7 +1029,7 @@ export default function ClaudeCodeDashboard() {
           ws://localhost:3001/ws
         </span>
         <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim }}>
-          {new Date().toLocaleTimeString('en-GB')}
+          {new Date(now).toLocaleTimeString('en-GB')}
         </span>
         <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim }}>
           Claude Code Agent Dashboard

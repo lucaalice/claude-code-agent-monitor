@@ -3,7 +3,7 @@
 # Called by Claude Code as a PreToolUse and PostToolUse hook for the Agent tool.
 # Receives JSON on stdin with tool_name, tool_input, hook_event_name, etc.
 
-DASHBOARD_URL="http://localhost:3001/api/event"
+DASHBOARD_URL="http://localhost:${DASHBOARD_PORT:-3001}/api/event"
 
 input=$(cat)
 
@@ -30,7 +30,7 @@ fi
 tokens=0
 agent_output=""
 if [ "$hook_event" = "PostToolUse" ]; then
-  agent_output=$(echo "$input" | jq -r '.tool_response.output // empty' | head -c 4000)
+  agent_output=$(echo "$input" | jq -r '.tool_response.output // empty' | cut -c 1-4000)
 fi
 
 if [ "$event_type" = "agent_complete" ] || [ "$event_type" = "agent_error" ]; then
@@ -48,7 +48,7 @@ if [ "$event_type" = "agent_complete" ] || [ "$event_type" = "agent_error" ]; th
 fi
 
 # Also mark team-lead as running when any agent starts
-if [ "$event_type" = "agent_start" ]; then
+if [ "$event_type" = "agent_start" ] && [ "$agent_type" != "team-lead" ]; then
   lead_task="Delegating to ${agent_type}: ${description:-no description}"
   curl -s -X POST "$DASHBOARD_URL" \
     -H 'Content-Type: application/json' \
@@ -56,6 +56,10 @@ if [ "$event_type" = "agent_start" ]; then
     --connect-timeout 1 --max-time 2 \
     >/dev/null 2>&1 &
 fi
+
+# Ensure tokens is a valid number for jq --argjson
+tokens=$(echo "$tokens" | grep -E '^[0-9]+$' || echo "0")
+[ -z "$tokens" ] && tokens=0
 
 # Fire and forget — don't block Claude Code if dashboard is down
 curl -s -X POST "$DASHBOARD_URL" \
