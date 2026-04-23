@@ -40,7 +40,7 @@ if [ "$hook_event" = "PostToolUse" ]; then
   fi
 fi
 
-# Also mark team-lead as running when any agent starts
+# Mark team-lead as running when any agent starts, idle when agent completes
 if [ "$event_type" = "agent_start" ] && [ "$agent_type" != "team-lead" ]; then
   lead_task="Delegating to ${agent_type}: ${description:-no description}"
   curl -s -X POST "$DASHBOARD_URL" \
@@ -48,6 +48,14 @@ if [ "$event_type" = "agent_start" ] && [ "$agent_type" != "team-lead" ]; then
     -d "$(jq -n --arg task "$lead_task" '{"type":"agent_start","agent":"team-lead","task":$task}')" \
     --connect-timeout 1 --max-time 2 \
     >/dev/null 2>&1 &
+elif [ "$event_type" = "agent_complete" ] || [ "$event_type" = "agent_error" ]; then
+  if [ "$agent_type" != "team-lead" ]; then
+    curl -s -X POST "$DASHBOARD_URL" \
+      -H 'Content-Type: application/json' \
+      -d '{"type":"agent_idle","agent":"team-lead"}' \
+      --connect-timeout 1 --max-time 2 \
+      >/dev/null 2>&1 &
+  fi
 fi
 
 # Ensure tokens is a valid number for jq --argjson

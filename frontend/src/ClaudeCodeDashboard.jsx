@@ -924,7 +924,7 @@ export default function ClaudeCodeDashboard() {
       {/* ── Metrics strip ─────────────────────────────────────────────────────── */}
       <MetricStrip
         metrics={agentState.globalMetrics}
-        activeAgentCount={runningCount}
+        activeAgentCount={agentState.globalMetrics.activeAgents}
         now={now}
         onArchive={archiveSession}
       />
