@@ -2,6 +2,14 @@
 
 A real-time browser dashboard that monitors a team of Claude Code sub-agents. The server receives lifecycle events from Claude Code hooks, maintains agent state in memory, and streams updates to connected browsers over WebSocket. A built-in demo mode simulates agent activity without requiring Claude Code to be running.
 
+### Dashboard overview (demo mode)
+
+![Dashboard — full view with active and idle agents](screenshots/dashboard-top.png)
+
+### Full agent grid with task queue
+
+![Dashboard — all 16 agents with task history](screenshots/dashboard-full.png)
+
 ---
 
 ## Architecture
