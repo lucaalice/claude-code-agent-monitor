@@ -11,6 +11,7 @@ interface AgentData {
 
 interface Props {
   agents: AgentData[];
+  embedded?: boolean;
 }
 
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
@@ -29,7 +30,7 @@ function estimateCost(agent: AgentData) {
   return (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
 }
 
-export function CostDonut({ agents }: Props) {
+export function CostDonut({ agents, embedded }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const active = agents.filter(a => a.allTimeTokens > 0).sort((a, b) => b.allTimeTokens - a.allTimeTokens);
@@ -97,31 +98,37 @@ export function CostDonut({ agents }: Props) {
 
   }, [agents, active, colorMap]);
 
+  const content = (
+    <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+      <svg ref={svgRef} style={{ width: 280, height: 280, flexShrink: 0 }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+        {active.map(a => {
+          const cost = estimateCost(a);
+          return (
+            <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 10, height: 10, borderRadius: 3, backgroundColor: colorMap[a.name], flexShrink: 0 }} />
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textPrimary, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textSecond, marginLeft: 'auto', flexShrink: 0 }}>
+                ${cost.toFixed(3)}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, flexShrink: 0 }}>
+                {formatTokens(a.allTimeTokens)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  if (embedded) return content;
+
   return (
     <div style={{ backgroundColor: T.bgSurface, borderRadius: 10, border: `1px solid ${T.borderMed}`, padding: '20px 20px 12px' }}>
       <div style={{ fontFamily: T.sans, fontSize: 13, fontWeight: 600, color: T.textPrimary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 14 }}>
         Cost Distribution
       </div>
-      <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-        <svg ref={svgRef} style={{ width: 280, height: 280, flexShrink: 0 }} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
-          {active.map(a => {
-            const cost = estimateCost(a);
-            return (
-              <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 10, height: 10, borderRadius: 3, backgroundColor: colorMap[a.name], flexShrink: 0 }} />
-                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textPrimary, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textSecond, marginLeft: 'auto', flexShrink: 0 }}>
-                  ${cost.toFixed(3)}
-                </span>
-                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, flexShrink: 0 }}>
-                  {formatTokens(a.allTimeTokens)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {content}
     </div>
   );
 }

@@ -11,9 +11,10 @@ interface AgentData {
 
 interface Props {
   agents: AgentData[];
+  embedded?: boolean;
 }
 
-export function AgentTokenChart({ agents }: Props) {
+export function AgentTokenChart({ agents, embedded }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -119,6 +120,10 @@ export function AgentTokenChart({ agents }: Props) {
     });
 
   }, [agents]);
+
+  if (embedded) {
+    return <svg ref={svgRef} style={{ width: '100%', height: 420 }} />;
+  }
 
   return (
     <div style={{ backgroundColor: T.bgSurface, borderRadius: 10, border: `1px solid ${T.borderMed}`, padding: '20px 20px 12px' }}>

@@ -12,6 +12,7 @@ interface AgentData {
 
 interface Props {
   agents: AgentData[];
+  embedded?: boolean;
 }
 
 interface SNode {
@@ -30,7 +31,7 @@ const modelColor = (name: string) => {
   return T.blue;
 };
 
-export function TokenSankey({ agents }: Props) {
+export function TokenSankey({ agents, embedded }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -160,6 +161,10 @@ export function TokenSankey({ agents }: Props) {
 
   const active = agents.filter(a => a.allTimeTokens > 0);
   const svgHeight = Math.max(320, active.length * 32);
+
+  if (embedded) {
+    return <svg ref={svgRef} style={{ width: '100%', height: svgHeight }} />;
+  }
 
   return (
     <div style={{ backgroundColor: T.bgSurface, borderRadius: 10, border: `1px solid ${T.borderMed}`, padding: '20px 20px 12px' }}>
