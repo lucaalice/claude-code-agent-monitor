@@ -27,7 +27,7 @@ export function MetricStrip({ metrics, activeAgentCount, now, onArchive }: Props
           {i > 0 && <Divider vertical />}
           <div style={{
             flex: 1, padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: 3,
-            backgroundColor: T.bgSurface, transition: 'background-color 0.2s ease',
+            backgroundColor: 'rgba(24,27,34,0.55)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'background-color 0.2s ease',
           }}>
             <span style={{ fontFamily: T.sans, fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
               {item.key}
@@ -43,7 +43,7 @@ export function MetricStrip({ metrics, activeAgentCount, now, onArchive }: Props
         </React.Fragment>
       ))}
       <Divider vertical />
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: T.bgSurface }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: 'rgba(24,27,34,0.55)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }}>
         <button
           onClick={onArchive}
           title="Archive current session and start fresh"

@@ -27,7 +27,8 @@ export function AppHeader({ connected, now, sessionStartTime, notifMuted, toggle
   return (
     <header style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0 18px', height: 48, backgroundColor: T.bgSurface,
+      padding: '0 18px', height: 48, backgroundColor: 'rgba(24,27,34,0.55)',
+      backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
       borderBottom: `1px solid ${T.border}`, flexShrink: 0,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

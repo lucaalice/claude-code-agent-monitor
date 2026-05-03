@@ -11,6 +11,7 @@ import { SectionHeader } from '../components/Primitives';
 import { TeamLeadCard, SubOrchestratorCard, SpecialistCard } from '../components/AgentCards';
 import { TaskQueue } from '../components/TaskQueue';
 import { AppHeader } from '../components/AppHeader';
+import { AuroraGradient } from '../components/AuroraGradient';
 import type { Agent } from '../types/api';
 
 export function DashboardPage() {
@@ -54,23 +55,28 @@ export function DashboardPage() {
       minHeight: '100vh', backgroundColor: T.bg, fontFamily: T.sans,
       color: T.textPrimary, display: 'flex', flexDirection: 'column',
     }}>
-      <AppHeader
-        connected={connected}
-        now={now}
-        sessionStartTime={agentState.globalMetrics.sessionStartTime}
-        notifMuted={notifMuted}
-        toggleMute={toggleMute}
-        showSessions={showSessions}
-        setShowSessions={setShowSessions}
-        fetchSessions={fetchSessions}
-      />
+      <div style={{ position: 'relative', overflow: 'hidden' }}>
+        <AuroraGradient activeAgents={agentState.globalMetrics.activeAgents} height={140} />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <AppHeader
+            connected={connected}
+            now={now}
+            sessionStartTime={agentState.globalMetrics.sessionStartTime}
+            notifMuted={notifMuted}
+            toggleMute={toggleMute}
+            showSessions={showSessions}
+            setShowSessions={setShowSessions}
+            fetchSessions={fetchSessions}
+          />
 
-      <MetricStrip
-        metrics={agentState.globalMetrics}
-        activeAgentCount={agentState.globalMetrics.activeAgents}
-        now={now}
-        onArchive={archiveSession}
-      />
+          <MetricStrip
+            metrics={agentState.globalMetrics}
+            activeAgentCount={agentState.globalMetrics.activeAgents}
+            now={now}
+            onArchive={archiveSession}
+          />
+        </div>
+      </div>
 
       <FilterBar filter={statusFilter} setFilter={setStatusFilter} counts={statusCounts} />
       <AgentTimeline now={now} />
