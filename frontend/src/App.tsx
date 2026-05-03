@@ -40,6 +40,14 @@ if (typeof document !== 'undefined' && !document.head.querySelector('[data-ccd-s
       0%   { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+    @keyframes digitOut {
+      0%   { transform: translateY(0); opacity: 1; }
+      100% { transform: translateY(-100%); opacity: 0; }
+    }
+    @keyframes digitIn {
+      0%   { transform: translateY(100%); opacity: 0; }
+      100% { transform: translateY(0); opacity: 1; }
+    }
     @keyframes connectBlink {
       0%, 100% { opacity: 1; }
       50%       { opacity: 0.4; }

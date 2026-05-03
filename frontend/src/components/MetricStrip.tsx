@@ -1,6 +1,7 @@
 import React from 'react';
 import { T } from '../theme';
 import { Divider } from './Primitives';
+import { RollingDigits } from './RollingDigits';
 import { formatCost, formatTokens, formatTime } from '../utils/format';
 import type { GlobalMetrics } from '../types/api';
 
@@ -13,11 +14,11 @@ interface Props {
 
 export function MetricStrip({ metrics, activeAgentCount, now, onArchive }: Props) {
   const items = [
-    { key: 'Active Agents', value: activeAgentCount, sub: null as string | null, unit: activeAgentCount === 1 ? 'agent' : 'agents', color: T.green, dim: T.greenDim },
-    { key: 'Tokens Used', value: formatTokens(metrics.totalTokens), sub: metrics.sessionTokens > 0 ? `session: ${formatTokens(metrics.sessionTokens)}` : null, unit: 'all time', color: T.blue, dim: T.blueDim },
-    { key: 'Est. Cost', value: formatCost(metrics.totalCost), sub: metrics.sessionCost > 0 ? `session: ${formatCost(metrics.sessionCost)}` : null, unit: 'all time', color: T.amber, dim: T.amberDim },
-    { key: 'Tasks Done', value: metrics.completedTasks, sub: metrics.sessionCompleted > 0 ? `session: ${metrics.sessionCompleted}` : null, unit: 'all time', color: T.purple, dim: 'rgba(167,139,250,0.12)' },
-    { key: 'Session', value: formatTime(now - metrics.sessionStartTime), sub: null, unit: 'elapsed', color: T.textSecond, dim: 'rgba(148,163,184,0.08)' },
+    { key: 'Active Agents', value: activeAgentCount, sub: null as string | null, unit: activeAgentCount === 1 ? 'agent' : 'agents', color: T.green, roll: true },
+    { key: 'Tokens Used', value: formatTokens(metrics.totalTokens), sub: metrics.sessionTokens > 0 ? `session: ${formatTokens(metrics.sessionTokens)}` : null, unit: 'all time', color: T.blue, roll: true },
+    { key: 'Est. Cost', value: formatCost(metrics.totalCost), sub: metrics.sessionCost > 0 ? `session: ${formatCost(metrics.sessionCost)}` : null, unit: 'all time', color: T.amber, roll: true },
+    { key: 'Tasks Done', value: metrics.completedTasks, sub: metrics.sessionCompleted > 0 ? `session: ${metrics.sessionCompleted}` : null, unit: 'all time', color: T.purple, roll: true },
+    { key: 'Session', value: formatTime(now - metrics.sessionStartTime), sub: null, unit: 'elapsed', color: T.textSecond, roll: false },
   ];
 
   return (
@@ -32,9 +33,19 @@ export function MetricStrip({ metrics, activeAgentCount, now, onArchive }: Props
             <span style={{ fontFamily: T.sans, fontSize: 10, fontWeight: 500, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
               {item.key}
             </span>
-            <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 700, color: item.color, lineHeight: 1, whiteSpace: 'nowrap' }}>
-              {item.value}
-            </span>
+            {item.roll ? (
+              <RollingDigits
+                value={item.value}
+                color={item.color}
+                fontSize={20}
+                fontFamily={T.mono}
+                fontWeight={700}
+              />
+            ) : (
+              <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 700, color: item.color, lineHeight: 1, whiteSpace: 'nowrap' }}>
+                {item.value}
+              </span>
+            )}
             <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textDim }}>{item.unit}</span>
             {item.sub && (
               <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, marginTop: 1 }}>{item.sub}</span>
