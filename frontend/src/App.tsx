@@ -3,6 +3,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { GraphPage } from './pages/GraphPage';
 
 // ─── Inject keyframes (once, globally) ───────────────────────────────────────
 if (typeof document !== 'undefined' && !document.head.querySelector('[data-ccd-styles]')) {
@@ -62,6 +63,7 @@ export default function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/workflow" element={<GraphPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </BrowserRouter>

@@ -35,6 +35,7 @@ export function PageNav() {
           <NavLink to="/" style={({ isActive }) => navLinkStyle(isActive)}>Dashboard</NavLink>
           <NavLink to="/sessions" style={({ isActive }) => navLinkStyle(isActive)}>Sessions</NavLink>
           <NavLink to="/analytics" style={({ isActive }) => navLinkStyle(isActive)}>Analytics</NavLink>
+          <NavLink to="/workflow" style={({ isActive }) => navLinkStyle(isActive)}>Workflow</NavLink>
           <NavLink to="/settings" style={({ isActive }) => navLinkStyle(isActive)}>Settings</NavLink>
         </nav>
       </div>
