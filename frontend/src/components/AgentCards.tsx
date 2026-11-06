@@ -225,14 +225,15 @@ export function TeamLeadCard({ agent, elapsedTime }: TeamLeadCardProps) {
   );
 }
 
-// ─── Sub-orchestrator card (seo-manager) ────────────────────────────────────
+// ─── Sub-orchestrator card (head-of-seo, seo-manager) ──────────────────────
 
 interface SubOrchestratorCardProps {
   agent: Agent;
   childCount: number;
+  childLabel?: string;
 }
 
-export function SubOrchestratorCard({ agent, childCount }: SubOrchestratorCardProps) {
+export function SubOrchestratorCard({ agent, childCount, childLabel = 'specialists' }: SubOrchestratorCardProps) {
   const [errorDismissed, setErrorDismissed] = useState(false);
   const isRunning = agent.status === 'running';
   const isError = agent.status === 'error';
@@ -254,7 +255,7 @@ export function SubOrchestratorCard({ agent, childCount }: SubOrchestratorCardPr
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontFamily: T.mono, fontSize: 11, color: isError ? T.red : isRunning ? T.green : T.textDim }}>&#9507;</span>
           <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: isError ? T.red : isRunning ? T.green : T.textPrimary, letterSpacing: 0.3 }}>
-            seo-manager
+            {agent.name}
           </span>
           <span style={{
             fontFamily: T.mono, fontSize: 10, color: T.textMuted,
@@ -263,7 +264,7 @@ export function SubOrchestratorCard({ agent, childCount }: SubOrchestratorCardPr
           }}>
             {agent.model}
           </span>
-          <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textMuted }}>{childCount} specialists</span>
+          <span style={{ fontFamily: T.sans, fontSize: 10, color: T.textMuted }}>{childCount} {childLabel}</span>
         </div>
         <StatusBadge status={agent.status} />
       </div>
