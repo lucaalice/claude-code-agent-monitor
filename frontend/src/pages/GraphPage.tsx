@@ -19,6 +19,8 @@ interface GraphNode {
   y: number;
   radius: number;
   tokenRatio: number; // 0-1, relative to max
+  tierLabel?: string;
+  labelSide?: 'below' | 'right';
 }
 
 interface GraphEdge {
@@ -34,6 +36,7 @@ const SEO_SPECIALISTS = [
 
 function getInitials(name: string): string {
   if (name === 'team-lead') return 'TL';
+  if (name === 'head-of-seo') return 'HoS';
   if (name === 'seo-manager') return 'SM';
   if (name.startsWith('seo-')) return name.replace('seo-', '').slice(0, 3).toUpperCase();
   const parts = name.split('-');
@@ -60,18 +63,26 @@ function buildGraph(state: DashboardState, width: number, height: number): { nod
   nodes.push({
     id: 'team-lead', label: 'team-lead', initials: 'TL',
     role: 'orchestrator', agent: state.teamLead,
-    x: cx, y: topY, radius: 34, tokenRatio: tokenRatio(state.teamLead),
+    x: cx, y: topY, radius: 34, tokenRatio: tokenRatio(state.teamLead), tierLabel: 'ORCHESTRATOR',
   });
 
   const allSpecs = Object.values(state.specialists);
-  const seoManager = allSpecs.find(a => a.name === 'seo-manager') || null;
-  const seoAgents = allSpecs.filter(a => SEO_SPECIALISTS.includes(a.name));
-  const directReports = allSpecs.filter(a => a.name !== 'seo-manager' && !SEO_SPECIALISTS.includes(a.name));
+  const byName = new Map(allSpecs.map(a => [a.name, a]));
+  const org = state.org ?? null;
 
-  // Direct reports + seo-manager in tier 2
+  // SEO lead: head-of-seo when the server sends an org, else legacy seo-manager.
+  const seoLead = (org ? byName.get(org.orchestrator) : byName.get('seo-manager')) ?? null;
+  const departments = org
+    ? org.departments.map(d => ({ name: d.name, agents: d.agents.map(n => byName.get(n)).filter((a): a is Agent => Boolean(a)) }))
+    : [{ name: '', agents: SEO_SPECIALISTS.map(n => byName.get(n)).filter((a): a is Agent => Boolean(a)) }];
+  const seoNames = new Set(departments.flatMap(d => d.agents.map(a => a.name)));
+  if (seoLead) seoNames.add(seoLead.name);
+  const directReports = allSpecs.filter(a => !seoNames.has(a.name));
+
+  // Tier 2: direct reports + SEO lead
   const directY = topY + tierGap;
   const tier2 = [...directReports];
-  if (seoManager) tier2.push(seoManager);
+  if (seoLead) tier2.push(seoLead);
   const padding = 60;
   const availableWidth = width - padding * 2;
   const tier2Spread = Math.min(availableWidth, tier2.length * 120);
@@ -79,32 +90,77 @@ function buildGraph(state: DashboardState, width: number, height: number): { nod
 
   tier2.forEach((agent, i) => {
     const x = tier2.length === 1 ? cx : tier2StartX + (i / (tier2.length - 1)) * tier2Spread;
-    const isSeoMgr = agent.name === 'seo-manager';
+    const isLead = agent === seoLead;
     nodes.push({
       id: agent.name, label: agent.name, initials: getInitials(agent.name),
-      role: isSeoMgr ? 'sub-orchestrator' : 'specialist', agent,
-      x, y: directY, radius: isSeoMgr ? 28 : 22, tokenRatio: tokenRatio(agent),
+      role: isLead ? 'sub-orchestrator' : 'specialist', agent,
+      x, y: directY, radius: isLead ? 28 : 22, tokenRatio: tokenRatio(agent), tierLabel: 'SPECIALISTS',
     });
     edges.push({ from: 'team-lead', to: agent.name, active: agent.status === 'running' });
   });
 
-  // SEO specialists in tier 3
-  if (seoManager && seoAgents.length > 0) {
-    const seoMgrNode = nodes.find(n => n.id === 'seo-manager')!;
+  if (!seoLead) return { nodes, edges };
+  const leadNode = nodes.find(n => n.id === seoLead.name)!;
+
+  if (!org) {
+    // Legacy: one row of SEO specialists under seo-manager
+    const seoAgents = departments[0].agents;
     const seoY = directY + tierGap * 0.85;
     const seoSpread = Math.min(availableWidth, seoAgents.length * 105);
-    const seoCenterX = Math.max(padding + seoSpread / 2, Math.min(width - padding - seoSpread / 2, seoMgrNode.x));
+    const seoCenterX = Math.max(padding + seoSpread / 2, Math.min(width - padding - seoSpread / 2, leadNode.x));
     const seoStartX = seoCenterX - seoSpread / 2;
-
     seoAgents.forEach((agent, i) => {
       const x = seoAgents.length === 1 ? seoCenterX : seoStartX + (i / (seoAgents.length - 1)) * seoSpread;
       nodes.push({
         id: agent.name, label: agent.name.replace('seo-', ''), initials: getInitials(agent.name),
-        role: 'specialist', agent, x, y: seoY, radius: 18, tokenRatio: tokenRatio(agent),
+        role: 'specialist', agent, x, y: seoY, radius: 18, tokenRatio: tokenRatio(agent), tierLabel: 'SEO TEAM',
       });
-      edges.push({ from: 'seo-manager', to: agent.name, active: agent.status === 'running' });
+      edges.push({ from: seoLead.name, to: agent.name, active: agent.status === 'running' });
     });
+    return { nodes, edges };
   }
+
+  // Org: department hubs in a row, each department's agents stacked in a column below it.
+  const deptY = directY + tierGap * 0.7;
+  // Leave room on the left for the faint tier labels
+  const orgLeft = padding + 30;
+  const colW = (width - orgLeft - padding) / Math.max(1, departments.length);
+  const agentTop = deptY + 70;
+  const maxCount = Math.max(1, ...departments.map(d => d.agents.length));
+  const step = Math.max(22, Math.min(36, (height - agentTop - 24) / maxCount));
+
+  departments.forEach((dept, di) => {
+    const colX = orgLeft + colW * (di + 0.5);
+    const running = dept.agents.filter(a => a.status === 'running').length;
+    const errored = dept.agents.some(a => a.status === 'error');
+    const hubId = `dept:${dept.name}`;
+    const hubAgent: Agent = {
+      name: dept.name, status: running > 0 ? 'running' : errored ? 'error' : 'idle',
+      currentTask: running > 0 ? `${running} of ${dept.agents.length} agents running` : null,
+      model: 'department', startTime: null,
+      tokensUsed: dept.agents.reduce((t, a) => t + (a.tokensUsed || 0), 0),
+      allTimeTokens: dept.agents.reduce((t, a) => t + (a.allTimeTokens || 0), 0),
+      taskCount: dept.agents.reduce((t, a) => t + (a.taskCount || 0), 0),
+      allTimeTasks: dept.agents.reduce((t, a) => t + (a.allTimeTasks || 0), 0),
+      lastOutput: null,
+    };
+    nodes.push({
+      id: hubId, label: dept.name, initials: dept.name.slice(0, 3).toUpperCase(),
+      role: 'sub-orchestrator', agent: hubAgent, x: colX, y: deptY, radius: 15,
+      tokenRatio: 0, tierLabel: 'DEPARTMENTS',
+    });
+    edges.push({ from: seoLead.name, to: hubId, active: running > 0 });
+
+    const agentX = colX - Math.min(45, colW * 0.28);
+    dept.agents.forEach((agent, i) => {
+      nodes.push({
+        id: agent.name, label: agent.name.replace('seo-', ''), initials: getInitials(agent.name),
+        role: 'specialist', agent, x: agentX, y: agentTop + i * step, radius: 9,
+        tokenRatio: tokenRatio(agent), tierLabel: 'SEO ORG', labelSide: 'right',
+      });
+      edges.push({ from: hubId, to: agent.name, active: agent.status === 'running' });
+    });
+  });
 
   return { nodes, edges };
 }
@@ -182,20 +238,12 @@ function drawGraph(
     }
   }
 
-  // Tier labels
+  // Tier labels: first node carrying each label sets its row
   const tiers = new Map<number, string>();
+  const seen = new Set<string>();
   nodes.forEach(n => {
-    if (n.role === 'orchestrator') tiers.set(n.y, 'ORCHESTRATOR');
-    else if (n.role === 'sub-orchestrator') {
-      if (!tiers.has(n.y)) tiers.set(n.y, 'SPECIALISTS');
-    }
-    else if (n.id.startsWith('seo-') && n.role === 'specialist') {
-      tiers.set(n.y, 'SEO TEAM');
-    }
+    if (n.tierLabel && !seen.has(n.tierLabel)) { seen.add(n.tierLabel); tiers.set(n.y, n.tierLabel); }
   });
-  // Add specialist tier
-  const specNodes = nodes.filter(n => n.role === 'specialist' && !n.id.startsWith('seo-'));
-  if (specNodes.length > 0) tiers.set(specNodes[0].y, 'SPECIALISTS');
 
   tiers.forEach((label, y) => {
     ctx.save();
@@ -348,7 +396,7 @@ function drawGraph(
 
     // Initials inside node
     ctx.fillStyle = isError ? T.red : isRunning ? meta.color : isHovered ? T.textPrimary : T.textSecond;
-    const fontSize = node.role === 'orchestrator' ? 14 : node.role === 'sub-orchestrator' ? 12 : 10;
+    const fontSize = node.role === 'orchestrator' ? 14 : node.radius < 12 ? 7 : node.role === 'sub-orchestrator' ? (node.radius < 20 ? 9 : 12) : 10;
     ctx.font = `700 ${fontSize}px ${T.mono}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -372,19 +420,33 @@ function drawGraph(
       ctx.beginPath(); ctx.arc(pipX, pipY, pipR + 4, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Label below node
-    ctx.fillStyle = isRunning ? meta.color : isHovered ? T.textPrimary : T.textMuted;
-    ctx.font = `${node.role === 'orchestrator' ? 600 : 500} ${node.role === 'orchestrator' ? 11 : 10}px ${T.sans}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText(node.label, node.x, node.y + r + 10);
-
-    // Token count below label
     const tokens = node.agent?.allTimeTokens || node.agent?.tokensUsed || 0;
-    if (tokens > 0) {
-      ctx.fillStyle = T.blue + '80';
-      ctx.font = `500 8px ${T.mono}`;
-      ctx.fillText(formatTokens(tokens), node.x, node.y + r + 24);
+    ctx.fillStyle = isRunning ? meta.color : isHovered ? T.textPrimary : T.textMuted;
+    if (node.labelSide === 'right') {
+      // Compact column layout: label (and tokens) to the right of the node
+      ctx.font = `500 10px ${T.sans}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(node.label, node.x + r + 9, node.y);
+      if (tokens > 0) {
+        const w = ctx.measureText(node.label).width;
+        ctx.fillStyle = T.blue + '80';
+        ctx.font = `500 8px ${T.mono}`;
+        ctx.fillText(formatTokens(tokens), node.x + r + 15 + w, node.y);
+      }
+    } else {
+      // Label below node
+      ctx.font = `${node.role === 'orchestrator' ? 600 : 500} ${node.role === 'orchestrator' ? 11 : 10}px ${T.sans}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(node.label, node.x, node.y + r + 10);
+
+      // Token count below label
+      if (tokens > 0) {
+        ctx.fillStyle = T.blue + '80';
+        ctx.font = `500 8px ${T.mono}`;
+        ctx.fillText(formatTokens(tokens), node.x, node.y + r + 24);
+      }
     }
   });
 }

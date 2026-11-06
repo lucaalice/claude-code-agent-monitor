@@ -1,0 +1,14 @@
+{
+  "orchestrator": "head-of-seo",
+  "source": "~/.claude/skills/head-of-seo/SKILL.md",
+  "departments": [
+    { "name": "Technical SEO",    "agents": ["seo-technical", "seo-indexing", "seo-performance", "seo-schema", "seo-internal-links", "seo-sitemap", "seo-visual"] },
+    { "name": "Keyword Research", "agents": ["seo-keyword-finder", "seo-intent-mapper", "seo-topical-map", "seo-opportunity-scorer"] },
+    { "name": "Content",          "agents": ["seo-brief-writer", "seo-draft-writer", "seo-editor", "seo-faq-builder", "seo-content-refresh"] },
+    { "name": "On-page",          "agents": ["seo-meta-tags", "seo-headings", "seo-entities", "seo-image-alt", "seo-content", "seo-onsite-expert"] },
+    { "name": "AI Visibility",    "agents": ["seo-prompt-tracker", "seo-citation-gap", "seo-mention-monitor", "seo-geo", "seo-answer-blocks"] },
+    { "name": "Authority",        "agents": ["seo-outreach", "seo-digital-pr", "seo-directories", "seo-listicles", "seo-reviews"] },
+    { "name": "Analytics",        "agents": ["seo-gsc-analyst", "seo-decay-detector", "seo-rank-tracker", "seo-ctr-optimizer", "seo-forecast"] },
+    { "name": "Reporting",        "agents": ["seo-weekly-report", "seo-stakeholder-update", "seo-qa-check"] }
+  ]
+}

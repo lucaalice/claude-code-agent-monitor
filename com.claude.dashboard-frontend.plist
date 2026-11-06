@@ -17,7 +17,7 @@
   <key>KeepAlive</key>
   <true/>
   <key>WorkingDirectory</key>
-  <string>/Users/lucaalice/Desktop/ClaudexSEO/agent-dashboard/frontend</string>
+  <string>/Users/lucaalice/Desktop/Luca's Claude/ClaudexSEO/agent-dashboard/frontend</string>
   <key>StandardOutPath</key>
   <string>/tmp/claude-dashboard-frontend.log</string>
   <key>StandardErrorPath</key>

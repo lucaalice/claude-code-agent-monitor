@@ -58,6 +58,18 @@ export interface DashboardState {
   specialists: Record<string, Agent>;
   globalMetrics: GlobalMetrics;
   taskQueue: TaskQueueEntry[];
+  /** SEO org from seo-org.json; null/absent when the server has no org file. */
+  org?: SeoOrg | null;
+}
+
+export interface SeoDepartment {
+  name: string;
+  agents: string[];
+}
+
+export interface SeoOrg {
+  orchestrator: string;
+  departments: SeoDepartment[];
 }
 
 // ─── WebSocket message types ────────────────────────────────────────────────

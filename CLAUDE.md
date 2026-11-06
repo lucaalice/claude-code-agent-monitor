@@ -51,6 +51,25 @@ team-lead (opus) — orchestrator
 
 Unknown agents from hook events are auto-registered with sonnet model.
 
+### SEO Org (head-of-seo)
+
+`seo-org.json` defines the 40-role SEO org: orchestrator `head-of-seo` plus 8
+departments (Technical SEO, Keyword Research, Content, On-page, AI Visibility,
+Authority, Analytics, Reporting). It mirrors the roster in
+`~/.claude/skills/head-of-seo/SKILL.md` — when that roster changes, update this file
+and restart the server.
+
+- The server registers every org agent on start (`INSERT OR IGNORE`) and sends
+  `org` in `/api/state`; the frontend groups by it. Without the file, the UI falls
+  back to the legacy `seo-manager` + 7 specialists layout.
+- `head-of-seo` is a **skill** in the main thread, so it never fires a hook event.
+  The server mirrors it: running while any org agent runs (task = "Delegating to
+  …"), idle when the last one finishes (`updateOrgOrchestrator`).
+- `seo-manager` is now legacy and shows under Direct Reports.
+- team-lead settles to idle server-side when the last specialist completes, and
+  idle closes **all** its open timeline rows (the hook's parallel `agent_idle` used
+  to lose the race and leave team-lead "running").
+
 ### Event Types
 
 | Type | Effect |

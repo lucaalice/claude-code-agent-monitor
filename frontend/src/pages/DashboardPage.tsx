@@ -42,13 +42,30 @@ export function DashboardPage() {
   const applyFilter = (agents: Agent[]) =>
     statusFilter === 'all' ? agents : agents.filter((a) => a.status === statusFilter);
 
-  const seoSpecialistNames = ['seo-technical', 'seo-content', 'seo-schema', 'seo-sitemap', 'seo-geo', 'seo-performance', 'seo-visual'];
-  const seoManager    = specialists.find((a) => a.name === 'seo-manager') || null;
-  const seoAgents     = specialists.filter((a) => seoSpecialistNames.includes(a.name));
-  const directReports = specialists.filter((a) => a.name !== 'seo-manager' && !seoSpecialistNames.includes(a.name));
+  // With an org from the server, the SEO section is head-of-seo + departments and
+  // seo-manager drops to a direct report. Without one, fall back to the legacy team.
+  const org = agentState.org ?? null;
+  const byName = new Map(specialists.map((a) => [a.name, a]));
+  const legacySeoNames = ['seo-technical', 'seo-content', 'seo-schema', 'seo-sitemap', 'seo-geo', 'seo-performance', 'seo-visual'];
+
+  const seoLead = (org ? byName.get(org.orchestrator) : byName.get('seo-manager')) ?? null;
+  const departments = org
+    ? org.departments.map((d) => ({
+        name: d.name,
+        agents: d.agents.map((n) => byName.get(n)).filter((a): a is Agent => Boolean(a)),
+      }))
+    : [{ name: '', agents: legacySeoNames.map((n) => byName.get(n)).filter((a): a is Agent => Boolean(a)) }];
+
+  const seoNames = new Set(departments.flatMap((d) => d.agents.map((a) => a.name)));
+  if (seoLead) seoNames.add(seoLead.name);
+  const seoAgents     = departments.flatMap((d) => d.agents);
+  const directReports = specialists.filter((a) => !seoNames.has(a.name));
 
   const filteredDirect = applyFilter([...directReports]).sort(statusSort);
-  const filteredSeo    = applyFilter([...seoAgents]).sort(statusSort);
+  const filteredDepts  = departments
+    .map((d) => ({ ...d, shown: applyFilter([...d.agents]).sort(statusSort) }))
+    .filter((d) => statusFilter === 'all' || d.shown.length > 0);
+  const seoRunning = seoAgents.filter((a) => a.status === 'running').length;
 
   return (
     <div style={{
@@ -115,26 +132,57 @@ export function DashboardPage() {
 
           <div style={{ flex: 1 }}>
             <SectionHeader
-              label="SEO Team"
-              right={`${seoAgents.filter(a => a.status === 'running').length} running \u00b7 ${seoAgents.length + 1} agents`}
+              label={org ? 'SEO Org' : 'SEO Team'}
+              right={`${seoRunning} running \u00b7 ${seoAgents.length + (seoLead ? 1 : 0)} agents`}
             />
-            {seoManager && <SubOrchestratorCard agent={seoManager} childCount={seoAgents.length} />}
-            {filteredSeo.length > 0 ? (
-              <div style={{
-                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-                gap: 10, padding: '8px 14px 12px 28px', marginLeft: 14,
-                borderLeft: `2px solid ${seoManager && seoManager.status === 'running' ? T.green + '40' : T.border}`,
-                transition: 'border-color 0.3s ease',
-              }}>
-                {filteredSeo.map((agent, i) => (
-                  <SpecialistCard key={agent.name} agent={agent} index={i} compact now={now} />
-                ))}
-              </div>
-            ) : (
-              <div style={{ padding: '16px 28px', marginLeft: 14, borderLeft: `2px solid ${T.border}`, fontFamily: T.sans, fontSize: 12, color: T.textDim }}>
-                No {statusFilter} agents
-              </div>
+            {seoLead && (
+              <SubOrchestratorCard
+                agent={seoLead}
+                childCount={org ? org.departments.length : seoAgents.length}
+                childLabel={org ? `departments \u00b7 ${seoAgents.length} agents` : 'specialists'}
+              />
             )}
+            <div style={{
+              padding: '4px 14px 12px 28px', marginLeft: 14,
+              borderLeft: `2px solid ${seoLead && seoLead.status === 'running' ? T.green + '40' : T.border}`,
+              transition: 'border-color 0.3s ease',
+            }}>
+              {filteredDepts.length === 0 && (
+                <div style={{ padding: '12px 0', fontFamily: T.sans, fontSize: 12, color: T.textDim }}>
+                  No {statusFilter} agents
+                </div>
+              )}
+              {filteredDepts.map((dept) => {
+                const deptRunning = dept.agents.filter((a) => a.status === 'running').length;
+                return (
+                  <div key={dept.name || 'team'} style={{ marginTop: 8 }}>
+                    {dept.name && (
+                      <div style={{
+                        display: 'flex', alignItems: 'baseline', gap: 8, padding: '4px 0 6px',
+                        fontFamily: T.mono, fontSize: 10, letterSpacing: 1, textTransform: 'uppercase',
+                        color: deptRunning > 0 ? T.green : T.textMuted,
+                      }}>
+                        <span>{dept.name}</span>
+                        <span style={{ color: T.textDim, letterSpacing: 0 }}>
+                          {deptRunning > 0 ? `${deptRunning} running \u00b7 ` : ''}{dept.agents.length}
+                        </span>
+                      </div>
+                    )}
+                    {dept.shown.length > 0 ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 10 }}>
+                        {dept.shown.map((agent, i) => (
+                          <SpecialistCard key={agent.name} agent={agent} index={i} compact now={now} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ padding: '4px 0 8px', fontFamily: T.sans, fontSize: 12, color: T.textDim }}>
+                        No {statusFilter} agents
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 

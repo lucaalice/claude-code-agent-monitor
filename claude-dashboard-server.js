@@ -15,6 +15,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
 const PORT = process.env.DASHBOARD_PORT || 3001;
 const DEMO = process.argv.includes('--demo');
@@ -61,6 +62,27 @@ const agentTeam = [
   'seo-performance',
   'seo-visual',
 ];
+
+// ── SEO org (Head of SEO + departments) ────────────────────────────
+// seo-org.json mirrors the roster in ~/.claude/skills/head-of-seo/SKILL.md.
+// head-of-seo is a skill that runs in the main thread, so it never fires its
+// own hook event: the server marks it running while any of its agents run.
+
+const ORG_PATH = path.join(__dirname, 'seo-org.json');
+
+function loadOrg() {
+  try {
+    const org = JSON.parse(fs.readFileSync(ORG_PATH, 'utf8'));
+    if (!org.orchestrator || !Array.isArray(org.departments)) throw new Error('missing orchestrator/departments');
+    return org;
+  } catch (err) {
+    console.warn(`[ORG] seo-org.json not loaded: ${err.message}`);
+    return null;
+  }
+}
+
+const seoOrg = loadOrg();
+const orgMembers = new Set(seoOrg ? seoOrg.departments.flatMap((d) => d.agents) : []);
 
 // ── SQLite persistence ─────────────────────────────────────────────
 
@@ -173,6 +195,15 @@ if (agentCount === 0) {
   tx();
 }
 
+// Register the SEO org on every start (idempotent) so new roles appear without a reset
+if (seoOrg) {
+  const insert = db.prepare('INSERT OR IGNORE INTO agents (name, model) VALUES (?, ?)');
+  db.transaction(() => {
+    insert.run(seoOrg.orchestrator, 'inherited');
+    orgMembers.forEach((name) => insert.run(name, 'inherited'));
+  })();
+}
+
 // Seed metrics if not exists
 const metricsExists = db.prepare('SELECT COUNT(*) as c FROM metrics').get().c;
 if (metricsExists === 0) {
@@ -218,6 +249,7 @@ function loadState() {
       sessionCompleted: metrics.completedTasks,
     },
     taskQueue: tasks,
+    org: seoOrg,
   };
 }
 
@@ -298,6 +330,11 @@ const stmts = {
     UPDATE timeline SET endTime = ?, status = ?
     WHERE id = (SELECT MAX(id) FROM timeline WHERE agent = ? AND status = 'running')
   `),
+  // team-lead opens one row per delegation; when it goes idle, close them all
+  timelineEndAll: db.prepare(`
+    UPDATE timeline SET endTime = ?, status = ?
+    WHERE agent = ? AND status = 'running' AND endTime IS NULL
+  `),
   timelineAll: db.prepare(`
     SELECT * FROM timeline
     WHERE startTime >= (SELECT sessionStartTime FROM metrics WHERE id = 1)
@@ -306,6 +343,24 @@ const stmts = {
 };
 
 // ── Event handler ──────────────────────────────────────────────────
+
+// Mirror an org agent's lifecycle onto head-of-seo: running while any of its
+// agents run, idle once the last one finishes.
+function updateOrgOrchestrator(type, agent, task) {
+  const head = seoOrg.orchestrator;
+  if (type === 'agent_start') {
+    const headRow = db.prepare('SELECT status FROM agents WHERE name = ?').get(head);
+    const now = Date.now();
+    stmts.setRunning.run(now, `Delegating to ${agent}${task ? `: ${task}` : ''}`, head);
+    if (!headRow || headRow.status !== 'running') stmts.timelineStart.run(head, 'Routing SEO org', now);
+  } else if (type === 'agent_complete' || type === 'agent_error') {
+    const running = db.prepare("SELECT name FROM agents WHERE status = 'running'").all();
+    if (!running.some((r) => orgMembers.has(r.name))) {
+      stmts.setIdle.run(head);
+      stmts.timelineEnd.run(Date.now(), 'completed', head);
+    }
+  }
+}
 
 function handleEvent(evt) {
   const { type, agent, task, tokens, output, usage } = evt;
@@ -340,7 +395,7 @@ function handleEvent(evt) {
       if (stillRunning > 0) return; // other agents still working
     }
     stmts.setIdle.run(agent);
-    stmts.timelineEnd.run(Date.now(), 'completed', agent);
+    (agent === 'team-lead' ? stmts.timelineEndAll : stmts.timelineEnd).run(Date.now(), 'completed', agent);
   }
 
   if (type === 'agent_error') {
@@ -349,6 +404,20 @@ function handleEvent(evt) {
     stmts.errorLatestTask.run(agent);
     stmts.timelineEnd.run(Date.now(), 'error', agent);
     stmts.insertTask.run(`Error: ${task || agent}`, agent, Date.now(), 'error', tokens || 0);
+  }
+
+  if (seoOrg && orgMembers.has(agent)) updateOrgOrchestrator(type, agent, task);
+
+  // The hook sends team-lead's agent_idle in parallel with the specialist's
+  // agent_complete; if idle lands first it is ignored and team-lead stays
+  // "running" forever. Settle it here once the last specialist finishes.
+  if ((type === 'agent_complete' || type === 'agent_error') && agent !== 'team-lead'
+      && stmts.countRunning.get().c === 0) {
+    const lead = db.prepare('SELECT status FROM agents WHERE name = ?').get('team-lead');
+    if (lead && lead.status === 'running') {
+      stmts.setIdle.run('team-lead');
+      stmts.timelineEndAll.run(Date.now(), 'completed', 'team-lead');
+    }
   }
 
   if (tokens && tokens > 0) {
